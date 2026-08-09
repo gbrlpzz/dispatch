@@ -1,49 +1,69 @@
 #!/usr/bin/env python3
 """Generate Dispatch's minimal black-on-white home-screen icon.
 
-The mark is a single geometric lowercase ``d``: a bold loop and a rounded
-stem, inspired by the restraint of modern fintech app icons. It is not a
-calendar illustration or a tiny wordmark, so it remains unmistakable at
-small iPhone sizes. The PNGs are full-bleed opaque white; iOS supplies the
-final continuous rounded mask.
+The mark is one real SF Pro Display Black lowercase ``d``. There is no
+illustration, date, gradient, or decorative frame: just the app's initial in
+the same restrained spirit as modern fintech icons. The glyph is optically
+centred (its ink mass is shifted slightly left/up from its mathematical
+bounding box) and rendered at high resolution before downsampling.
 """
 from __future__ import annotations
 
 import os
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icons"))
+FONT_CANDIDATES = [
+    "/System/Library/Fonts/SFNS.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/System/Library/Fonts/HelveticaNeue.ttc",
+]
 BLACK = (0, 0, 0, 255)
 WHITE = (255, 255, 255, 255)
 
 
+def load_font(size: int):
+    for path in FONT_CANDIDATES:
+        try:
+            font = ImageFont.truetype(path, size)
+            # SFNS is variable: width, optical size, grade, weight.
+            if path.endswith("SFNS.ttf"):
+                try:
+                    font.set_variation_by_axes([100, 96, 500, 900])
+                except Exception:
+                    pass
+            return font
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
 def draw_icon(size: int) -> Image.Image:
-    """Render a strong, centred geometric d at high resolution."""
     image = Image.new("RGBA", (size, size), WHITE)
     draw = ImageDraw.Draw(image)
-    s = float(size)
+    font_size = round(size * 0.86)
+    font = load_font(font_size)
+    glyph = "d"
+    bbox = draw.textbbox((0, 0), glyph, font=font)
+    ink_w = bbox[2] - bbox[0]
+    ink_h = bbox[3] - bbox[1]
 
-    # Loop: generous white counter and a heavy, smooth black ring.
-    cx, cy = 422, 548
-    outer, inner = 238, 112
-    draw.ellipse((cx - outer, cy - outer, cx + outer, cy + outer), fill=BLACK)
-    draw.ellipse((cx - inner, cy - inner, cx + inner, cy + inner), fill=WHITE)
-
-    # Rounded stem on the right, overlapping the loop to create one continuous
-    # mark. The proportions are deliberately bold at a 60px Home Screen size.
-    stem_left, stem_right = 570, 704
-    stem_top, stem_bottom, stem_radius = 150, 874, 67
-    draw.rounded_rectangle((stem_left, stem_top, stem_right, stem_bottom), radius=stem_radius, fill=BLACK)
-
+    # Centre the actual glyph bounds, then apply a measured optical correction:
+    # the lowercase d's stem makes its black mass read slightly right/heavy.
+    x = (size - ink_w) / 2 - bbox[0] - size * 0.024
+    y = (size - ink_h) / 2 - bbox[1] - size * 0.030
+    draw.text((round(x), round(y)), glyph, font=font, fill=BLACK)
     return image
 
 
 def write_svg(path: str) -> None:
+    # SF Pro is present on Apple devices; the fallbacks keep the favicon
+    # legible elsewhere. The PNGs remain the authoritative Home Screen mark.
     svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <rect width="1024" height="1024" fill="#fff"/>
-  <circle cx="422" cy="548" r="238" fill="#000"/>
-  <circle cx="422" cy="548" r="112" fill="#fff"/>
-  <rect x="570" y="150" width="134" height="724" rx="67" fill="#000"/>
+  <text x="488" y="482" text-anchor="middle" dominant-baseline="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif"
+        font-size="880" font-weight="900" fill="#000">d</text>
 </svg>
 """
     with open(path, "w", encoding="utf-8") as f:

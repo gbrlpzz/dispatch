@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <rect width="1024" height="1024" fill="#fff"/>
-  <circle cx="422" cy="548" r="238" fill="#000"/>
-  <circle cx="422" cy="548" r="112" fill="#fff"/>
-  <rect x="570" y="150" width="134" height="724" rx="67" fill="#000"/>
+  <text x="488" y="482" text-anchor="middle" dominant-baseline="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif"
+        font-size="880" font-weight="900" fill="#000">d</text>
 </svg>
