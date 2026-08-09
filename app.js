@@ -447,6 +447,11 @@ function youtubeChannelIdFromUrl(u) {
   return m ? m[1] : null;
 }
 
+function youtubeUserFromUrl(u) {
+  const m = u.pathname.match(/^\/(?:@|user\/|c\/)([^/]+)/i);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function youtubeChannelIdFromPage(handleUrl) {
   const { text } = await fetchText(handleUrl);
   const m = text.match(/"channelId":"(UC[\w-]{22})"/) ||
@@ -520,7 +525,7 @@ async function applePodcastLookup(id) {
   }
 }
 
-async function resolveFeedUrl(raw) {
+async function resolveFeedUrl(raw, options = {}) {
   const url = normalizeUrl(raw);
   const u = new URL(url);
   const host = u.hostname.replace(/^www\./, '').toLowerCase();
@@ -536,6 +541,13 @@ async function resolveFeedUrl(raw) {
 
   // --- YouTube ---
   if (isYouTubeHost) {
+    const user = youtubeUserFromUrl(u);
+    if (user) {
+      // YouTube still supports its lightweight legacy user RSS endpoint for
+      // many app-shared handles. Try it first; hydration falls back to page
+      // channel-id extraction when a handle is not mapped there.
+      return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user) };
+    }
     const isSingleVideo = host === 'youtu.be' || /\/watch\b/.test(u.pathname) || /\/shorts\//.test(u.pathname);
     const hasPlaylist = !!u.searchParams.get('list');
     if (isSingleVideo || hasPlaylist) {
@@ -548,8 +560,14 @@ async function resolveFeedUrl(raw) {
       const authorUrl = embed && embed.author_url ? embed.author_url : '';
       let channelId = null;
       if (authorUrl) {
-        try { channelId = youtubeChannelIdFromUrl(new URL(authorUrl)); } catch (e) { /* resolve below */ }
-        if (!channelId) channelId = await youtubeChannelIdFromPage(authorUrl);
+        try {
+          const authorPage = new URL(authorUrl);
+          channelId = youtubeChannelIdFromUrl(authorPage);
+          if (channelId) return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId };
+          const authorUser = youtubeUserFromUrl(authorPage);
+          if (authorUser) return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(authorUser) };
+        } catch (e) { /* resolve below */ }
+        channelId = await youtubeChannelIdFromPage(authorUrl);
       }
       if (!channelId && hasPlaylist) channelId = await youtubeChannelIdFromPage(url);
       if (channelId) {
@@ -594,11 +612,18 @@ async function resolveFeedUrl(raw) {
     return { kind: 'source', type: 'article', url, feedUrl: url };
   }
 
+  const origin = u.origin;
+  if (options.optimistic !== false) {
+    // Most publication platforms (including custom-domain Substacks) expose
+    // /feed. Persist that candidate immediately; hydrateSource performs the
+    // full discovery fallback if this candidate is not a feed.
+    return { kind: 'source', type: 'article', url, feedUrl: origin + '/feed', optimistic: true };
+  }
+
   // --- Page scan + common feed paths ---
   // Run the page scan and the most likely /feed paths together. Publication
   // pages often expose one or the other; racing them makes mobile adds feel
   // immediate without requiring a preview request first.
-  const origin = u.origin;
   const pagePromise = findFeedLinkInHtml(url).then((found) => {
     if (!found) throw new Error('No alternate feed link');
     return { kind: 'source', type: 'article', url, feedUrl: found };
@@ -677,7 +702,29 @@ async function addSource(rawUrl) {
 async function hydrateSource(source, resolved) {
   if (!state.sources.some((s) => s.id === source.id)) return;
   try {
-    const text = resolved.feedText || await fetchFeed(source.feedUrl);
+    let text;
+    try {
+      text = resolved.feedText || await fetchFeed(source.feedUrl);
+    } catch (firstError) {
+      // If the lightweight YouTube user feed is not mapped, fall back to the
+      // channel page once and upgrade the source to its canonical UC feed.
+      if (source.type === 'youtube' && /feeds\/videos\.xml\?user=/i.test(source.feedUrl)) {
+        const channelId = await youtubeChannelIdFromPage(source.url);
+        if (!channelId) throw firstError;
+        source.feedUrl = 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId;
+        text = await fetchFeed(source.feedUrl);
+      } else if (resolved.optimistic) {
+        // Publication pages get an immediate /feed candidate. If that was a
+        // 404/HTML page, now do the slower explicit alternate/candidate
+        // discovery and retry with the real feed URL.
+        const discovered = await resolveFeedUrl(source.url, { optimistic: false });
+        if (!discovered.feedUrl || discovered.feedUrl === source.feedUrl) throw firstError;
+        source.feedUrl = discovered.feedUrl;
+        text = discovered.feedText || await fetchFeed(source.feedUrl);
+      } else {
+        throw firstError;
+      }
+    }
     const parsed = parseFeed(text, source.feedUrl);
     let type = source.type;
     if (parsed.items.some((i) => i.kind === 'podcast') || /<itunes:/i.test(text.slice(0, 3000))) type = 'podcast';
