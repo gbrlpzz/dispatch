@@ -1,12 +1,15 @@
 # Dispatch
 
-**A local-first personal feed, shaped like Apple Calendar.**
+**A minimal, private, distraction-free personal feed, arranged by day.**
 
-Dispatch turns your feed subscriptions into a calendar you can swipe through:
-a row of day bubbles up top, today's content below, and a swipe left or right
-to move between days. Every day shows the articles, videos and podcast
-episodes your sources published that day — with cards that link out to the
-Substack, YouTube or Apple Podcasts apps.
+Dispatch is a small, focused tool in the spirit of *minimal, effective,
+undistracted, private* software: one screen, your feeds, nothing else.
+Your subscriptions become a day-by-day calendar you can swipe through — a row
+of day bubbles up top, today's content below, a swipe left or right to move
+between days. Every day shows the articles, videos and podcast episodes your
+sources published that day, with cards that link out to the Substack, YouTube
+or Apple Podcasts apps. No algorithm, no notifications, no feed of feeds —
+just what you chose to follow, when it appeared.
 
 Everything runs in your browser and everything stays on your device:
 
@@ -23,10 +26,10 @@ Everything runs in your browser and everything stays on your device:
 
 ## Features
 
-- **Calendar-shaped feed.** A scrollable strip of day bubbles (today marked
-  with an outline, the selected day filled), a date title, and a swipeable
-  day view — built to the Apple Human Interface Guidelines with a monochrome
-  palette that follows light/dark appearance.
+- **Arranged by day.** A scrollable strip of day bubbles (today marked with an
+  outline, the selected day filled), a date title, and a swipeable day view —
+  built to the Apple Human Interface Guidelines with a monochrome palette that
+  follows light/dark appearance. Swiping beats scrolling: one day, one glance.
 - **Three kinds of sources.**
   - *Text* — Substack and any RSS/Atom feed, with cover image, byline and a
     pulled summary.
