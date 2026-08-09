@@ -101,6 +101,7 @@ const state = {
   items: [],
   db: null,
   fetching: false,
+  fetchingSourceIds: new Set(),
   stripRange: null, // { start: Date, end: Date }
 };
 
@@ -667,6 +668,7 @@ async function addSource(rawUrl) {
   const id = await storePut('sources', source);
   source.id = id;
   state.sources.push(source);
+  state.fetchingSourceIds.add(source.id);
   renderAll();
   void hydrateSource(source, resolved);
   return source;
@@ -704,6 +706,8 @@ async function hydrateSource(source, resolved) {
       source.lastError = err && err.message ? err.message : String(err);
       await storePut('sources', source);
     }
+  } finally {
+    state.fetchingSourceIds.delete(source.id);
   }
   renderAll();
 }
@@ -1004,6 +1008,7 @@ function typeLabel(t) {
 }
 
 function sourceSub(source) {
+  if (state.fetchingSourceIds.has(source.id)) return typeLabel(source.type) + ' · fetching…';
   if (source.lastError) return 'Error — ' + source.lastError;
   if (source.lastFetchedAt) return typeLabel(source.type) + ' · updated ' + timeAgo(source.lastFetchedAt);
   return typeLabel(source.type) + ' · not fetched yet';
