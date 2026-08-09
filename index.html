@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Dispatch</title>
+  <meta name="description" content="Dispatch — a local-first personal feed, shaped like a calendar. Add Substack, YouTube and podcast feeds, swipe between days, everything stored on your device.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Dispatch">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F7">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="navbar">
+      <button id="today-btn" class="nav-btn" aria-label="Jump to today">Today</button>
+      <h1 id="nav-title">Today</h1>
+      <button id="add-btn" class="nav-btn nav-btn--icon" aria-label="Add source or link">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <nav id="strip" aria-label="Choose a day"></nav>
+
+    <main id="pager" aria-live="polite">
+      <div id="pull-indicator" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+      </div>
+      <div id="dayview"></div>
+    </main>
+
+    <div id="toast" role="status" hidden></div>
+  </div>
+
+  <div id="backdrop" hidden></div>
+
+  <section id="sheet" role="dialog" aria-modal="true" hidden>
+    <div id="sheet-grabber"></div>
+    <div id="sheet-body"></div>
+  </section>
+
+  <section id="sources-screen" hidden>
+    <header class="screen-nav">
+      <button id="sources-done" class="nav-btn">Done</button>
+      <h2>Sources</h2>
+      <button id="sources-add" class="nav-btn nav-btn--icon" aria-label="Add source">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div id="sources-list"></div>
+    <p id="sources-footer">Deleting a source removes its items from every day.</p>
+  </section>
+
+  <script src="app.js" defer></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
+</body>
+</html>
