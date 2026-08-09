@@ -186,8 +186,9 @@ async function deleteItemsForSource(sourceId) {
 /* ---------------- Feed fetching (local, in-browser) ---------------- */
 
 const PROXIES = [
-  // corsproxy is fast for Substack and publication pages; allorigins is the
-  // reliable fallback for YouTube and feeds that reject it.
+  // cors.io returns a CORS-enabled JSON envelope and is currently the fast
+  // path for both Substack feeds and YouTube channel pages.
+  (u) => 'https://cors.io/?url=' + encodeURIComponent(u),
   (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
   (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
   (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
@@ -215,6 +216,15 @@ async function fetchText(url) {
       const r = await fetchWithTimeout(PROXIES[i](url), { headers }, 10000);
       if (!r.ok) continue;
       const text = await r.text();
+      if (i === 0) {
+        try {
+          const envelope = JSON.parse(text);
+          if (envelope && envelope.status >= 200 && envelope.status < 300 && typeof envelope.body === 'string') {
+            return { text: envelope.body, via: 'proxy' };
+          }
+        } catch (e) { /* not the cors.io envelope */ }
+        continue;
+      }
       if (i === PROXIES.length - 1) {
         try {
           const j = JSON.parse(text);

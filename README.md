@@ -111,10 +111,11 @@ Most feeds (Substack, YouTube, most podcast hosts) don't send CORS headers,
 so a browser can't fetch them directly. Dispatch tries, in order:
 
 1. the feed directly,
-2. `corsproxy.io` (fast path for publication pages such as Substack),
-3. `api.allorigins.win` (raw),
-4. `api.codetabs.com`,
-5. `api.allorigins.win` (JSON wrapper).
+2. `cors.io` (fast JSON envelope for Substack and YouTube),
+3. `corsproxy.io`,
+4. `api.allorigins.win` (raw),
+5. `api.codetabs.com`,
+6. `api.allorigins.win` (JSON wrapper).
 
 You can edit the `PROXIES` array at the top of `app.js` to use your own
 proxy or remove the fallbacks entirely. Note that feed URLs and titles pass
