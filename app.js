@@ -48,12 +48,10 @@ function dayKey(d) {
 function fromDayKey(k) { const [y, m, dd] = k.split('-').map(Number); return new Date(y, m - 1, dd); }
 
 function navTitle(d) {
-  const t = todayMidnight();
-  const diff = Math.round((d - t) / DAY_MS);
-  if (diff === 0) return 'Today';
-  if (diff === 1) return 'Tomorrow';
-  if (diff === -1) return 'Yesterday';
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  // Always the full date — the “Today” button already says Today.
+  const opts = { weekday: 'long', month: 'long', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
 }
 
 function timeAgo(iso) {
@@ -62,7 +60,7 @@ function timeAgo(iso) {
   const m = 60000, h = 3600000, d = 86400000;
   if (diff < 0) return 'just now';
   if (diff < 60 * m) return 'just now';
-  if (diff < 60 * h) return Math.max(1, Math.round(diff / m)) + 'm ago';
+  if (diff < h) return Math.max(1, Math.round(diff / m)) + 'm ago';
   if (diff < 24 * h) return Math.round(diff / h) + 'h ago';
   if (diff < 7 * d) return Math.round(diff / d) + 'd ago';
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -611,6 +609,7 @@ async function addSource(rawUrl) {
   source.id = id;
   state.sources.push(source);
   await fetchSource(source.id, parsed, text);
+  renderAll();
   return source;
 }
 
@@ -688,7 +687,6 @@ async function fetchSource(sourceId, preParsed, preText) {
     source.lastError = err && err.message ? err.message : String(err);
     await storePut('sources', source);
   }
-  renderAll();
 }
 
 async function refreshAll(force) {
@@ -696,10 +694,13 @@ async function refreshAll(force) {
   state.fetching = true;
   try {
     await Promise.all(state.sources.map((s) => fetchSource(s.id)));
+    renderAll();
+    if (state.sources.length && state.sources.every((s) => !!s.lastError)) {
+      toast('Couldn’t refresh — check your connection');
+    }
   } finally {
     state.fetching = false;
   }
-  renderAll();
 }
 
 async function removeSource(id) {
@@ -771,6 +772,11 @@ function renderStrip() {
   const strip = $('#strip');
   const today = todayMidnight();
   const selKey = dayKey(state.day);
+  const prevScrollLeft = strip.scrollLeft;
+  const prevSel = strip.querySelector('.bubble--selected');
+  const selWasVisible = prevSel
+    ? (prevSel.offsetLeft >= prevScrollLeft - 8 && prevSel.offsetLeft + prevSel.clientWidth <= prevScrollLeft + strip.clientWidth + 8)
+    : false;
   const frag = document.createDocumentFragment();
   const wdFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
   for (let d = state.stripRange.start; d <= state.stripRange.end; d = addDays(d, 1)) {
@@ -788,7 +794,11 @@ function renderStrip() {
   }
   strip.innerHTML = '';
   strip.appendChild(frag);
-  scrollStripTo(selKey, false);
+  if (selWasVisible) {
+    strip.scrollLeft = prevScrollLeft;   // data refresh: don't yank the strip
+  } else {
+    scrollStripTo(selKey, false);        // day change: recenter the selection
+  }
 }
 
 function scrollStripTo(dayKeyVal, smooth) {
@@ -900,11 +910,17 @@ function buildPinCard(pin) {
     media +
     '<div class="pin-head">' + ICONS.pin + '<span>Pinned</span>' +
       '<span class="relative-time">' + esc(timeAgo(pin.createdAt)) + '</span>' +
+      '<button class="pin-remove" aria-label="Remove this pinned link">' + ICONS.xmark + '</button>' +
     '</div>' +
     '<h3 class="card-title">' + esc(pin.title) + '</h3>' +
     (pin.note ? '<p class="pin-note">' + esc(pin.note) + '</p>' : '') +
     '<p class="pin-host">' + esc(hostOf(pin.url)) + '</p>' +
     '<span class="pill"><span>Open</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
+  card.querySelector('.pin-remove').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    removePin(pin.id);
+  });
   return card;
 }
 
@@ -941,7 +957,7 @@ function renderDay() {
     for (const p of pins) frag.appendChild(buildPinCard(p));
   }
   if (items.length) {
-    frag.appendChild(el('div', 'day-header', pins.length ? 'Feed' : day.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })));
+    if (pins.length) frag.appendChild(el('div', 'day-header', 'Feed'));
     for (const it of items) {
       const src = srcById.get(it.sourceId);
       frag.appendChild(buildItemCard(it, src));

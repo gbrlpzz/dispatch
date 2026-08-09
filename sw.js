@@ -4,7 +4,7 @@
    the network. */
 'use strict';
 
-const VERSION = 'dispatch-v3';
+const VERSION = 'dispatch-v4';
 const SHELL = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const SHELL = [
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
   './icons/favicon-64.png',
+  './icons/favicon.svg',
 ];
 
 self.addEventListener('install', (event) => {
