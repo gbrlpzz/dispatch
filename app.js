@@ -431,6 +431,12 @@ function parseAtomItem(en) {
 function normalizeUrl(raw) {
   let url = String(raw || '').trim();
   if (!url) throw new Error('Enter a URL.');
+  // Mobile share sheets sometimes include surrounding prose, markdown, or
+  // punctuation. Keep the first real URL and discard only its wrapper text.
+  const embedded = url.match(/https?:\/\/[^\s<>"'`]+/i);
+  if (embedded) url = embedded[0];
+  url = url.replace(/^<|>$/g, '').replace(/[),.;!?]+$/g, '');
+  if (/^feed:\/\//i.test(url)) url = 'https://' + url.slice(7);
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   return url;
 }
@@ -449,17 +455,23 @@ async function youtubeChannelIdFromPage(handleUrl) {
 }
 
 async function oembed(url) {
-  for (const ep of [
+  const endpoints = [
     'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url),
     'https://noembed.com/embed?url=' + encodeURIComponent(url),
-  ]) {
+  ];
+  for (const ep of endpoints) {
     try {
       const r = await fetchWithTimeout(ep, {}, 10000);
       if (r.ok) {
         const j = await r.json();
         if (j && j.title) return j;
       }
-    } catch (e) { /* try next */ }
+    } catch (e) { /* use the next endpoint/proxy */ }
+    try {
+      const { text } = await fetchText(ep);
+      const j = JSON.parse(text);
+      if (j && j.title) return j;
+    } catch (e) { /* use the next endpoint */ }
   }
   return null;
 }
@@ -523,20 +535,28 @@ async function resolveFeedUrl(raw) {
 
   // --- YouTube ---
   if (isYouTubeHost) {
-    if (host === 'youtu.be' || /\/watch\b/.test(u.pathname) || /\/shorts\//.test(u.pathname)) {
+    const isSingleVideo = host === 'youtu.be' || /\/watch\b/.test(u.pathname) || /\/shorts\//.test(u.pathname);
+    const hasPlaylist = !!u.searchParams.get('list');
+    if (isSingleVideo || hasPlaylist) {
       const videoId = host === 'youtu.be'
         ? u.pathname.slice(1).split('/')[0]
         : (u.searchParams.get('v') || '');
-      const embed = await oembed(url);
-      return {
-        kind: 'video',
-        type: 'youtube',
-        url,
-        title: embed ? embed.title : 'YouTube video',
-        author: embed && embed.author_name ? embed.author_name : '',
-        image: embed && embed.thumbnail_url ? embed.thumbnail_url : 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg',
-        feedUrl: null,
-      };
+      const embed = isSingleVideo ? await oembed(url) : null;
+      // A shared video is still useful as a source: follow its channel rather
+      // than rejecting a perfectly valid YouTube share URL.
+      const authorUrl = embed && embed.author_url ? embed.author_url : '';
+      let channelId = null;
+      if (authorUrl) {
+        try { channelId = youtubeChannelIdFromUrl(new URL(authorUrl)); } catch (e) { /* resolve below */ }
+        if (!channelId) channelId = await youtubeChannelIdFromPage(authorUrl);
+      }
+      if (!channelId && hasPlaylist) channelId = await youtubeChannelIdFromPage(url);
+      if (channelId) {
+        return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId };
+      }
+      if (isSingleVideo) {
+        throw new Error('Could not identify the YouTube channel from this video. Paste the channel page URL instead.');
+      }
     }
     const channelId = youtubeChannelIdFromUrl(u) || await youtubeChannelIdFromPage(url);
     if (!channelId) throw new Error('Could not find this YouTube channel. Use a channel page URL.');
