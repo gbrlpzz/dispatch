@@ -185,8 +185,10 @@ async function deleteItemsForSource(sourceId) {
 /* ---------------- Feed fetching (local, in-browser) ---------------- */
 
 const PROXIES = [
-  (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  // corsproxy is fast for Substack and publication pages; allorigins is the
+  // reliable fallback for YouTube and feeds that reject it.
   (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
   (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
   (u) => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u),
 ];
@@ -203,13 +205,13 @@ async function fetchText(url) {
     'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.5',
   };
   try {
-    const r = await fetchWithTimeout(url, { headers, redirect: 'follow' });
+    const r = await fetchWithTimeout(url, { headers, redirect: 'follow' }, 8000);
     if (r.ok) return { text: await r.text(), via: 'direct' };
   } catch (e) { /* CORS or network — fall through to proxies */ }
 
   for (let i = 0; i < PROXIES.length; i++) {
     try {
-      const r = await fetchWithTimeout(PROXIES[i](url), { headers });
+      const r = await fetchWithTimeout(PROXIES[i](url), { headers }, 10000);
       if (!r.ok) continue;
       const text = await r.text();
       if (i === PROXIES.length - 1) {
@@ -479,18 +481,8 @@ async function findFeedLinkInHtml(url) {
       const href = (tag.match(/href=["']([^"']+)["']/i) || [])[1];
       if (href) links.push(new URL(href, url).href);
     }
-    if (links.length) return links[0];
-    // look for feedburner-style alternate without explicit type attr ordering
-    const re2 = /<link[^>]+rel=["']alternate["'][^>]*>/gi;
-    let m2;
-    while ((m2 = re2.exec(text)) && links.length < 6) {
-      const tag = m2[0];
-      const href = (tag.match(/href=["']([^"']+)["']/i) || [])[1];
-      if (href) {
-        const u = new URL(href, url).href;
-        if (!links.includes(u)) links.push(u);
-      }
-    }
+    // Only trust an explicit RSS/Atom alternate. A generic rel=alternate
+    // link can be a language/canonical URL and is not safe to add as a feed.
     return links.length ? links[0] : null;
   } catch (e) { return null; }
 }
@@ -520,6 +512,14 @@ async function resolveFeedUrl(raw) {
   const u = new URL(url);
   const host = u.hostname.replace(/^www\./, '').toLowerCase();
   const isYouTubeHost = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
+  const isSubstackHost = host.endsWith('.substack.com') && host !== 'substack.com';
+
+  // Substack's publication feed is stable at /feed. Do not download the
+  // heavy publication page first; persist the source immediately and let the
+  // background hydrator fetch the feed once.
+  if (isSubstackHost) {
+    return { kind: 'source', type: 'article', url, feedUrl: u.origin + '/feed' };
+  }
 
   // --- YouTube ---
   if (isYouTubeHost) {
@@ -568,28 +568,35 @@ async function resolveFeedUrl(raw) {
   }
 
   // --- Feed-looking URL ---
-  if (/\.(xml|rss|atom)(\?|$)/i.test(u.pathname)) {
+  const likelyFeedPath = /(?:^|\/)(?:feed(?:\/podcast)?|podcast\/(?:rss|feed)|rss|atom)(?:\/)?$/i.test(u.pathname) || /\.(xml|rss|atom)$/i.test(u.pathname);
+  if (likelyFeedPath) {
     return { kind: 'source', type: 'article', url, feedUrl: url };
   }
 
-  // --- Page scan for <link rel=alternate> ---
-  const found = await findFeedLinkInHtml(url);
-  if (found) {
-    try {
-      const { text } = await fetchText(found);
-      if (looksLikeFeed(text)) {
-        return { kind: 'source', type: 'article', url, feedUrl: found };
-      }
-    } catch (e) { /* a stale alternate link: keep searching */ }
-  }
-
-  // --- Candidate feed paths ---
+  // --- Page scan + common feed paths ---
+  // Run the page scan and the most likely /feed paths together. Publication
+  // pages often expose one or the other; racing them makes mobile adds feel
+  // immediate without requiring a preview request first.
   const origin = u.origin;
-  for (const cand of feedCandidates(origin)) {
-    try {
-      const { text } = await fetchText(cand);
-      if (looksLikeFeed(text)) return { kind: 'source', type: 'article', url, feedUrl: cand };
-    } catch (e) { /* keep trying */ }
+  const pagePromise = findFeedLinkInHtml(url).then((found) => {
+    if (!found) throw new Error('No alternate feed link');
+    return { kind: 'source', type: 'article', url, feedUrl: found };
+  });
+  const quickCandidates = feedCandidates(origin).slice(0, 3);
+  const quickPromise = Promise.any(quickCandidates.map(async (cand) => {
+    const { text } = await fetchText(cand);
+    if (!looksLikeFeed(text)) throw new Error('Not a feed');
+    return { kind: 'source', type: 'article', url, feedUrl: cand, feedText: text };
+  }));
+  try {
+    return await Promise.any([pagePromise, quickPromise]);
+  } catch (e) {
+    for (const cand of feedCandidates(origin).slice(3)) {
+      try {
+        const { text } = await fetchText(cand);
+        if (looksLikeFeed(text)) return { kind: 'source', type: 'article', url, feedUrl: cand, feedText: text };
+      } catch (err) { /* keep trying */ }
+    }
   }
   throw new Error('No feed found at this URL.');
 }
@@ -617,34 +624,22 @@ async function addSource(rawUrl) {
   }
   const feedUrl = resolved.feedUrl;
 
-  // dedupe
   if (state.sources.some((s) => s.feedUrl === feedUrl)) {
     throw new Error('This source is already added.');
   }
 
-  const text = await fetchFeed(feedUrl);
-  const parsed = parseFeed(text, feedUrl);
-  let type = resolved.type === 'youtube' ? 'youtube' : (resolved.type === 'podcast' ? 'podcast' : 'article');
-  if (parsed.items.some((i) => i.kind === 'podcast') ||
-      /<itunes:/i.test(text.slice(0, 3000))) type = 'podcast';
-  if (resolved.type === 'youtube') type = 'youtube';
-
-  let itunesId = null, itunesUrl = resolved.appleUrl || null;
-  if (type === 'podcast') {
-    const it = await itunesLookup(parsed.feedTitle);
-    if (it) { itunesId = it.itunesId; itunesUrl = it.itunesUrl; }
-  }
-
-  const siteUrl = parsed.feedLink || resolved.url;
+  // Persist the source as soon as its URL is resolved. Feed parsing and item
+  // storage continue in the background, so the mobile sheet closes promptly.
+  const initialType = resolved.type === 'youtube' ? 'youtube' : (resolved.type === 'podcast' ? 'podcast' : 'article');
   const source = {
     url: resolved.url,
     feedUrl,
-    title: parsed.feedTitle,
-    type,
-    siteUrl,
-    iconUrl: parsed.feedIcon || ('https://' + hostOf(feedUrl) + '/favicon.ico'),
-    itunesId,
-    itunesUrl,
+    title: resolved.title || hostOf(resolved.url),
+    type: initialType,
+    siteUrl: resolved.url,
+    iconUrl: 'https://' + hostOf(feedUrl) + '/favicon.ico',
+    itunesId: resolved.appleId || null,
+    itunesUrl: resolved.appleUrl || null,
     addedAt: new Date().toISOString(),
     lastFetchedAt: null,
     lastError: null,
@@ -652,9 +647,45 @@ async function addSource(rawUrl) {
   const id = await storePut('sources', source);
   source.id = id;
   state.sources.push(source);
-  await fetchSource(source.id, parsed, text);
   renderAll();
+  void hydrateSource(source, resolved);
   return source;
+}
+
+async function hydrateSource(source, resolved) {
+  if (!state.sources.some((s) => s.id === source.id)) return;
+  try {
+    const text = resolved.feedText || await fetchFeed(source.feedUrl);
+    const parsed = parseFeed(text, source.feedUrl);
+    let type = source.type;
+    if (parsed.items.some((i) => i.kind === 'podcast') || /<itunes:/i.test(text.slice(0, 3000))) type = 'podcast';
+    if (resolved.type === 'youtube') type = 'youtube';
+    source.type = type;
+    source.title = parsed.feedTitle || source.title;
+    source.siteUrl = parsed.feedLink || source.siteUrl;
+    source.iconUrl = parsed.feedIcon || source.iconUrl;
+    await storePut('sources', source);
+
+    // Item parsing/storage happens independently of the optional Apple
+    // Podcasts search, so a slow lookup never delays the feed itself.
+    const lookup = type === 'podcast' && !source.itunesUrl
+      ? itunesLookup(parsed.feedTitle)
+      : Promise.resolve(null);
+    await fetchSource(source.id, parsed, text);
+    if (!state.sources.some((s) => s.id === source.id)) return;
+    const it = await lookup;
+    if (it) {
+      source.itunesId = it.itunesId;
+      source.itunesUrl = it.itunesUrl;
+      await storePut('sources', source);
+    }
+  } catch (err) {
+    if (state.sources.some((s) => s.id === source.id)) {
+      source.lastError = err && err.message ? err.message : String(err);
+      await storePut('sources', source);
+    }
+  }
+  renderAll();
 }
 
 async function fetchSource(sourceId, preParsed, preText) {
@@ -1113,7 +1144,7 @@ function buildSourceSheet() {
     try {
       const src = await addSource(url);
       closeSheet();
-      toast('Added “' + src.title + '”');
+      toast('Source added');
     } catch (err) {
       btn.dataset.busy = '';
       btn.textContent = 'Add';

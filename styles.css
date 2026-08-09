@@ -360,6 +360,15 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
 .pill:active { background: var(--fill-strong); }
 .pill-arrow { font-size: 0.765rem; opacity: 0.7; }
 
+/* Card CTAs follow the index card anatomy: one consistent full-width action
+   row, with the label left and the external-link affordance right. Empty
+   states retain compact native buttons. */
+.card > .pill {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+}
+
 /* Podcast card: square artwork left, Apple Podcasts style */
 .pod-row { display: flex; gap: 0.71rem; align-items: flex-start; }
 .pod-art {

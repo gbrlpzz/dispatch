@@ -4,9 +4,9 @@
 
 Dispatch is a small, focused tool in the spirit of *minimal, effective,
 undistracted, private* software: one screen, your feeds, nothing else.
-Your subscriptions become a focused daily reading stream you can swipe through — a row
-of live date bubbles up top, the selected day below, and a swipe left or right to move
-between days. Every day shows the articles, videos and podcast episodes your
+Your subscriptions become a focused daily reading stream you can swipe through —
+a row of live date bubbles up top, the selected day below, and a swipe left or right
+to move between days. Every day shows the articles, videos and podcast episodes your
 sources published that day, with cards that link out to the Substack, YouTube
 or Apple Podcasts apps. No algorithm, no notifications, no feed of feeds —
 just what you chose to follow, when it appeared.
@@ -111,8 +111,8 @@ Most feeds (Substack, YouTube, most podcast hosts) don't send CORS headers,
 so a browser can't fetch them directly. Dispatch tries, in order:
 
 1. the feed directly,
-2. `api.allorigins.win` (raw),
-3. `corsproxy.io`,
+2. `corsproxy.io` (fast path for publication pages such as Substack),
+3. `api.allorigins.win` (raw),
 4. `api.codetabs.com`,
 5. `api.allorigins.win` (JSON wrapper).
 
