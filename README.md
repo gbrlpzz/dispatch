@@ -84,6 +84,12 @@ HTTPS or use a tool that sets the right headers:
 npx serve .
 ```
 
+## Development
+
+The app is plain HTML/CSS/JS — edit and reload. The monochrome home-screen
+icons are generated with `scripts/make_icons.py` (Pillow, macOS SF-style
+font); re-run it after touching the icon motif.
+
 ## Deploy
 
 Any static host works. Vercel (this repo's setup):
