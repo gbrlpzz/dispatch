@@ -1,108 +1,104 @@
 #!/usr/bin/env python3
-"""Generate Dispatch home-screen icons (monochrome, full-bleed).
+"""Generate Dispatch's monochrome home-screen icon.
 
-Motif: the app's signature UI element — a row of day bubbles. On a
-pure-black field: two white outline bubbles flanking one filled white
-bubble that carries a bold date number, with a short feed line beneath.
-Full-bleed and opaque so iOS applies its own rounded mask; the artwork
-stays inside the center ~66% for maskable safe zones.
-
-Usage: python3 scripts/make_icons.py
+The mark is deliberately simple at iPhone icon size: a white calendar/feed
+card on a black field, with native calendar binding rings, one selected day
+bubble, and three dispatch lines. It is full-bleed and opaque so iOS can apply
+its own continuous rounded mask. Keep all artwork inside the central safe zone
+for maskable Android/PWA icons too.
 """
+from __future__ import annotations
+
 import os
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icons"))
 
-FONT_CANDS = [
-    "/System/Library/Fonts/SFNS.ttf",            # SF Pro variable — weight set via font.set_variation_by_axes if possible
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-]
 
-
-def load_font(size: int):
-    for path in FONT_CANDS:
-        try:
-            f = ImageFont.truetype(path, size)
-            try:
-                f.set_variation_by_axes([800.0])  # Black weight when variable
-            except Exception:
-                pass
-            return f
-        except Exception:
-            continue
-    return ImageFont.load_default()
+def rounded_rect(draw: ImageDraw.ImageDraw, box, radius: float, fill):
+    draw.rounded_rectangle(tuple(round(v) for v in box), radius=round(radius), fill=fill)
 
 
 def draw_icon(size: int) -> Image.Image:
-    S = size
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 255))
-    d = ImageDraw.Draw(img)
+    """Render one high-resolution, strictly black/white icon."""
+    s = float(size)
+    black = (0, 0, 0, 255)
+    white = (255, 255, 255, 255)
+    img = Image.new("RGBA", (size, size), black)
+    draw = ImageDraw.Draw(img)
 
-    # ---- Day bubble row ----
-    n = 3
-    bw = S * 0.185                     # bubble width
-    bh = S * 0.235                     # bubble height
-    gap = S * 0.05
-    total = n * bw + (n - 1) * gap
-    x0 = (S - total) / 2
-    y0 = S * 0.345                     # row top
-    lw = max(3, int(S * 0.021))        # outline weight
+    # A paper/card silhouette. The outer black field remains visible as a
+    # quiet border after the platform applies its own icon mask.
+    left, top, right, bottom = 128, 112, 896, 912
+    radius = 126
+    rounded_rect(draw, (left, top, right, bottom), radius, white)
 
-    cx = x0 + bw / 2
-    for i in range(n):
-        bx = x0 + i * (bw + gap)
-        if i == 1:
-            # filled bubble with the date
-            d.rounded_rectangle([bx, y0, bx + bw, y0 + bh], radius=bh / 2, fill=(255, 255, 255, 255))
-            fs = int(bh * 0.72)
-            font = load_font(fs)
-            text = "14"
-            bbox = d.textbbox((0, 0), text, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            d.text((cx - tw / 2 - bbox[0], y0 + bh / 2 - th / 2 - bbox[1]), text,
-                   font=font, fill=(0, 0, 0, 255))
-        else:
-            d.rounded_rectangle([bx, y0, bx + bw, y0 + bh], radius=bh / 2,
-                                outline=(255, 255, 255, 255), width=lw)
+    # Calendar binding/header: rounded at the top, square against the body.
+    rounded_rect(draw, (left, top, right, 338), radius, black)
+    draw.rectangle((left, 220, right, 338), fill=black)
 
-    # ---- Feed line (three descending bars, echoing the card layout) ----
-    bar_y = y0 + bh + S * 0.085
-    bar_w = bw * 0.92
-    bar_h = max(3, int(S * 0.016))
-    bar_gap = bar_h * 2.4
-    for k, wfac in enumerate((1.0, 0.66, 0.4)):
-        b2 = bar_w * wfac
-        bx = cx - b2 / 2
-        d.rounded_rectangle([bx, bar_y + k * (bar_h + bar_gap), bx + b2, bar_y + k * (bar_h + bar_gap) + bar_h],
-                            radius=bar_h / 2, fill=(255, 255, 255, 235))
+    # Two clear binding rings, intentionally oversized for legibility at 60px.
+    for x in (292, 684):
+        rounded_rect(draw, (x, 82, x + 48, 250), 24, white)
+
+    # Selected day bubble: one solid, quiet circle rather than tiny text.
+    cx, cy, r = 326, 486, 94
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=black)
+    # A small white centre keeps the mark readable as a selected day without
+    # baking in a stale date that could be wrong tomorrow.
+    draw.ellipse((cx - 20, cy - 20, cx + 20, cy + 20), fill=white)
+
+    # Dispatch/feed lines, aligned to a strict 8pt-like grid.
+    line_x = 486
+    line_y = 430
+    line_h = 34
+    for width in (276, 222, 166):
+        rounded_rect(draw, (line_x, line_y, line_x + width, line_y + line_h), line_h / 2, black)
+        line_y += 82
+
+    # A quiet lower rule anchors the card and makes the feed structure read at
+    # small sizes; it is shorter than the top line so the icon stays light.
+    rounded_rect(draw, (258, 742, 766, 776), 17, black)
 
     return img
 
 
-def main():
+def write_svg(path: str) -> None:
+    # Same geometry as the raster mark, kept hand-authored so the favicon is
+    # crisp at browser sizes.
+    svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#000"/>
+  <rect x="128" y="112" width="768" height="800" rx="126" fill="#fff"/>
+  <path d="M128 238a126 126 0 0 1 126-126h516a126 126 0 0 1 126 126v100H128z" fill="#000"/>
+  <rect x="292" y="82" width="48" height="168" rx="24" fill="#fff"/>
+  <rect x="684" y="82" width="48" height="168" rx="24" fill="#fff"/>
+  <circle cx="326" cy="486" r="94" fill="#000"/>
+  <circle cx="326" cy="486" r="20" fill="#fff"/>
+  <rect x="486" y="430" width="276" height="34" rx="17" fill="#000"/>
+  <rect x="486" y="512" width="222" height="34" rx="17" fill="#000"/>
+  <rect x="486" y="594" width="166" height="34" rx="17" fill="#000"/>
+  <rect x="258" y="742" width="508" height="34" rx="17" fill="#000"/>
+</svg>
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(svg)
+
+
+def main() -> None:
     os.makedirs(OUT, exist_ok=True)
     base = draw_icon(1024)
-    for name, size in [("icon-192.png", 192), ("icon-512.png", 512),
-                       ("apple-touch-icon.png", 180), ("favicon-64.png", 64)]:
-        im = base.resize((size, size), Image.LANCZOS).convert("RGB")
-        im.save(os.path.join(OUT, name), "PNG")
-    # SVG favicon (same motif, hand-drawn primitives)
-    svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#000"/>
-  <rect x="126" y="177" width="74" height="94" rx="47" fill="none" stroke="#fff" stroke-width="11"/>
-  <rect x="219" y="177" width="74" height="94" rx="47" fill="#fff"/>
-  <text x="256" y="247" font-family="Helvetica, Arial, sans-serif" font-size="62" font-weight="700"
-        fill="#000" text-anchor="middle" dominant-baseline="middle">14</text>
-  <rect x="312" y="177" width="74" height="94" rx="47" fill="none" stroke="#fff" stroke-width="11"/>
-  <rect x="150" y="330" width="212" height="10" rx="5" fill="#fff"/>
-  <rect x="177" y="354" width="158" height="10" rx="5" fill="#fff" opacity="0.66"/>
-  <rect x="212" y="378" width="88" height="10" rx="5" fill="#fff" opacity="0.4"/>
-</svg>'''
-    with open(os.path.join(OUT, "favicon.svg"), "w") as f:
-        f.write(svg)
-    print("icons written to", OUT)
+    for filename, size in (
+        ("icon-192.png", 192),
+        ("icon-512.png", 512),
+        ("apple-touch-icon.png", 180),
+        ("favicon-64.png", 64),
+    ):
+        # Opaque RGB PNG: the OS owns the final icon mask.
+        base.resize((size, size), Image.Resampling.LANCZOS).convert("RGB").save(
+            os.path.join(OUT, filename), "PNG", optimize=True
+        )
+    write_svg(os.path.join(OUT, "favicon.svg"))
+    print(f"icons written to {OUT}")
 
 
 if __name__ == "__main__":

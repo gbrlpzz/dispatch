@@ -1,11 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#000"/>
-  <rect x="126" y="177" width="74" height="94" rx="47" fill="none" stroke="#fff" stroke-width="11"/>
-  <rect x="219" y="177" width="74" height="94" rx="47" fill="#fff"/>
-  <text x="256" y="247" font-family="Helvetica, Arial, sans-serif" font-size="62" font-weight="700"
-        fill="#000" text-anchor="middle" dominant-baseline="middle">14</text>
-  <rect x="312" y="177" width="74" height="94" rx="47" fill="none" stroke="#fff" stroke-width="11"/>
-  <rect x="150" y="330" width="212" height="10" rx="5" fill="#fff"/>
-  <rect x="177" y="354" width="158" height="10" rx="5" fill="#fff" opacity="0.66"/>
-  <rect x="212" y="378" width="88" height="10" rx="5" fill="#fff" opacity="0.4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#000"/>
+  <rect x="128" y="112" width="768" height="800" rx="126" fill="#fff"/>
+  <path d="M128 238a126 126 0 0 1 126-126h516a126 126 0 0 1 126 126v100H128z" fill="#000"/>
+  <rect x="292" y="82" width="48" height="168" rx="24" fill="#fff"/>
+  <rect x="684" y="82" width="48" height="168" rx="24" fill="#fff"/>
+  <circle cx="326" cy="486" r="94" fill="#000"/>
+  <circle cx="326" cy="486" r="20" fill="#fff"/>
+  <rect x="486" y="430" width="276" height="34" rx="17" fill="#000"/>
+  <rect x="486" y="512" width="222" height="34" rx="17" fill="#000"/>
+  <rect x="486" y="594" width="166" height="34" rx="17" fill="#000"/>
+  <rect x="258" y="742" width="508" height="34" rx="17" fill="#000"/>
 </svg>

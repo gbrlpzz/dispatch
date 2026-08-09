@@ -4,8 +4,8 @@
 
 Dispatch is a small, focused tool in the spirit of *minimal, effective,
 undistracted, private* software: one screen, your feeds, nothing else.
-Your subscriptions become a day-by-day calendar you can swipe through — a row
-of day bubbles up top, today's content below, a swipe left or right to move
+Your subscriptions become a focused daily reading stream you can swipe through — a row
+of live date bubbles up top, the selected day below, and a swipe left or right to move
 between days. Every day shows the articles, videos and podcast episodes your
 sources published that day, with cards that link out to the Substack, YouTube
 or Apple Podcasts apps. No algorithm, no notifications, no feed of feeds —
@@ -28,7 +28,7 @@ Everything runs in your browser and everything stays on your device:
 
 - **Arranged by day.** A spotlight carousel of circular day bubbles: scroll
   the strip and dates slide through a fixed centre — whatever lands there
-  becomes the selected day. The date title stays perfectly centred, and the
+  becomes the selected day. The weekday title stays perfectly centred, and the
   day view swipes left and right like a pager. Built to the Apple Human
   Interface Guidelines with a monochrome palette that follows light/dark
   appearance. Swiping beats scrolling: one day, one glance.
@@ -52,10 +52,12 @@ Everything runs in your browser and everything stays on your device:
 
 ## How it works
 
-1. **Adding a source.** Paste a link — a Substack publication, a YouTube
-   channel page (`/channel/…` or `@handle`), a podcast RSS URL, or any
-   RSS/Atom feed. Dispatch resolves the feed URL, fetches it, classifies it
-   (text / video / podcast), and stores it locally. For podcasts it also
+1. **Adding a source.** Paste the publication, channel, show or feed URL — a
+   Substack publication page, a YouTube channel page (`/channel/…`, `/c/…`,
+   `/user/…` or `@handle`), an Apple Podcasts show page, a podcast RSS URL,
+   or any RSS/Atom feed. Dispatch adapts the URL to the underlying feed,
+   fetches it, classifies it (text / video / podcast), and stores it locally.
+   For podcasts it also
    looks up the show on Apple Podcasts so cards can deep-link into the app.
 2. **Fetching.** Feeds are parsed in the browser (RSS 2.0, Atom, and the
    YouTube channel feed). Each item is bucketed into the *device-local* day

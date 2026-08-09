@@ -13,12 +13,12 @@
   <link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
   <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F7">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F5F7">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
   <meta property="og:title" content="Dispatch — your daily feed, kept private">
   <meta property="og:description" content="A minimal, private, distraction-free personal feed arranged by day. Add Substack, YouTube and podcast sources, swipe between days, everything stays on your device.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="icons/icon-512.png">
+  <meta property="og:image" content="/icons/icon-512.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -27,8 +27,15 @@
       <button id="today-btn" class="nav-btn" aria-label="Jump to today">Today</button>
       <h1 id="nav-title">Today</h1>
       <div class="nav-right">
-        <button id="sources-btn" class="nav-btn" aria-label="Manage sources">Sources</button>
-        <button id="add-btn" class="nav-btn nav-btn--icon" aria-label="Add source">
+        <button id="sources-btn" class="nav-btn nav-btn--icon" aria-label="Manage sources" title="Sources">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="5" cy="7" r="1.4" fill="currentColor"/>
+            <circle cx="5" cy="12" r="1.4" fill="currentColor"/>
+            <circle cx="5" cy="17" r="1.4" fill="currentColor"/>
+            <path d="M9 7h10M9 12h10M9 17h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="add-btn" class="nav-btn nav-btn--icon" aria-label="Add source" title="Add source">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
       </div>

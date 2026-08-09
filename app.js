@@ -48,10 +48,9 @@ function dayKey(d) {
 function fromDayKey(k) { const [y, m, dd] = k.split('-').map(Number); return new Date(y, m - 1, dd); }
 
 function navTitle(d) {
-  // Always the full date — the “Today” button already says Today.
-  const opts = { weekday: 'long', month: 'long', day: 'numeric' };
-  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-  return d.toLocaleDateString(undefined, opts);
+  // The bubbles already carry the precise DD/MM date; keep the native
+  // navigation title quiet and readable with only the weekday.
+  return d.toLocaleDateString(undefined, { weekday: 'long' });
 }
 
 function timeAgo(iso) {
@@ -85,7 +84,6 @@ const ICONS = {
   text: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M5 10h14M5 15h9M5 19h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   xmark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 15v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
 };
 
 const KIND_META = {
@@ -275,11 +273,19 @@ function attrOf(node, names) {
 
 function firstImage(html) {
   if (!html) return '';
-  const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-  if (m) return m[1];
+  // Prefer a real editorial image over a tracking pixel, avatar, or logo.
+  const tags = html.match(/<img\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const src = (tag.match(/\bsrc=["']([^"']+)["']/i) || [])[1] || '';
+    if (!src || /^data:/i.test(src) || /\.svg(?:[?#]|$)/i.test(src)) continue;
+    const width = Number((tag.match(/\bwidth=["']?(\d+)/i) || [])[1] || 0);
+    const height = Number((tag.match(/\bheight=["']?(\d+)/i) || [])[1] || 0);
+    if (width && height && (width < 180 || height < 120)) continue;
+    if (/avatar|author|logo|icon/i.test(tag) && width && width < 500) continue;
+    return src;
+  }
   const m2 = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-  if (m2) return m2[1];
-  return '';
+  return m2 ? m2[1] : '';
 }
 
 function parseDate(str) {
@@ -456,21 +462,6 @@ async function oembed(url) {
   return null;
 }
 
-async function ogFromPage(url) {
-  try {
-    const { text } = await fetchText(url);
-    const mTitle = text.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
-                   text.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
-                   text.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const mImage = text.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-                   text.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-    return {
-      title: mTitle ? mTitle[1].trim() : '',
-      image: mImage ? mImage[1].trim() : '',
-    };
-  } catch (e) { return { title: '', image: '' }; }
-}
-
 function feedCandidates(origin) {
   return ['/feed', '/feed/', '/rss', '/rss.xml', '/feed.xml', '/index.xml', '/atom.xml', '/rss/']
     .map((p) => origin + p);
@@ -502,6 +493,26 @@ async function findFeedLinkInHtml(url) {
     }
     return links.length ? links[0] : null;
   } catch (e) { return null; }
+}
+
+async function applePodcastLookup(id) {
+  const endpoint = 'https://itunes.apple.com/lookup?id=' + encodeURIComponent(id) + '&entity=podcast';
+  try {
+    const r = await fetchWithTimeout(endpoint, { headers: { Accept: 'application/json' } }, 12000);
+    if (r.ok) {
+      const j = await r.json();
+      const result = j.results && j.results[0];
+      if (result && result.feedUrl) return result;
+    }
+  } catch (e) { /* use the normal proxy fallback below */ }
+  try {
+    const { text } = await fetchText(endpoint);
+    const j = JSON.parse(text);
+    const result = j.results && j.results[0];
+    return result && result.feedUrl ? result : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 async function resolveFeedUrl(raw) {
@@ -537,6 +548,25 @@ async function resolveFeedUrl(raw) {
     };
   }
 
+  // --- Apple Podcasts / iTunes show pages ---
+  // A show page is not itself an RSS feed, but its numeric id is stable and
+  // Apple's lookup endpoint returns the publisher's feed URL.
+  if (host === 'podcasts.apple.com' || host === 'itunes.apple.com') {
+    const idMatch = u.pathname.match(/\bid(\d+)/i);
+    if (idMatch) {
+      const result = await applePodcastLookup(idMatch[1]);
+      if (result && result.feedUrl) {
+        return {
+          kind: 'source',
+          type: 'podcast',
+          url,
+          feedUrl: result.feedUrl,
+          appleUrl: result.collectionViewUrl || url,
+        };
+      }
+    }
+  }
+
   // --- Feed-looking URL ---
   if (/\.(xml|rss|atom)(\?|$)/i.test(u.pathname)) {
     return { kind: 'source', type: 'article', url, feedUrl: url };
@@ -545,7 +575,12 @@ async function resolveFeedUrl(raw) {
   // --- Page scan for <link rel=alternate> ---
   const found = await findFeedLinkInHtml(url);
   if (found) {
-    return { kind: 'source', type: 'article', url, feedUrl: found };
+    try {
+      const { text } = await fetchText(found);
+      if (looksLikeFeed(text)) {
+        return { kind: 'source', type: 'article', url, feedUrl: found };
+      }
+    } catch (e) { /* a stale alternate link: keep searching */ }
   }
 
   // --- Candidate feed paths ---
@@ -589,12 +624,12 @@ async function addSource(rawUrl) {
 
   const text = await fetchFeed(feedUrl);
   const parsed = parseFeed(text, feedUrl);
-  let type = resolved.type === 'youtube' ? 'youtube' : 'article';
+  let type = resolved.type === 'youtube' ? 'youtube' : (resolved.type === 'podcast' ? 'podcast' : 'article');
   if (parsed.items.some((i) => i.kind === 'podcast') ||
       /<itunes:/i.test(text.slice(0, 3000))) type = 'podcast';
   if (resolved.type === 'youtube') type = 'youtube';
 
-  let itunesId = null, itunesUrl = null;
+  let itunesId = null, itunesUrl = resolved.appleUrl || null;
   if (type === 'podcast') {
     const it = await itunesLookup(parsed.feedTitle);
     if (it) { itunesId = it.itunesId; itunesUrl = it.itunesUrl; }
@@ -737,7 +772,7 @@ function ensureStripRange() {
   }
 }
 
-function renderStrip() {
+function renderStrip({ center = false, smooth = false } = {}) {
   ensureStripRange();
   const strip = $('#strip');
   const today = todayMidnight();
@@ -766,10 +801,14 @@ function renderStrip() {
   }
   strip.innerHTML = '';
   strip.appendChild(frag);
-  if (selWasVisible) {
+  if (center) {
+    // A focused day is always the spotlight: move the whole carousel so the
+    // selected circle, not just its black fill, is exactly at centre.
+    scrollStripTo(selKey, smooth);
+  } else if (selWasVisible) {
     strip.scrollLeft = prevScrollLeft;   // data refresh: don't yank the strip
   } else {
-    scrollStripTo(selKey, false);        // day change: recenter the selection
+    scrollStripTo(selKey, false);        // first render / range extension
   }
 }
 
@@ -783,16 +822,11 @@ function scrollStripTo(dayKeyVal, smooth) {
 
 /* ---------------- Rendering: day content ---------------- */
 
-function kindBadge(kind) {
-  const meta = KIND_META[kind] || KIND_META.link;
-  return '<span class="source-badge" aria-hidden="true">' + meta.icon + '</span>';
-}
-
 function sourceBadge(source) {
-  if (source && source.iconUrl) {
-    return '<span class="source-badge"><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer"></span>';
-  }
   const letter = source && source.title ? esc(source.title.trim()[0].toUpperCase()) : '?';
+  if (source && source.iconUrl) {
+    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></span>';
+  }
   return '<span class="source-badge" aria-hidden="true">' + letter + '</span>';
 }
 
@@ -867,13 +901,18 @@ function buildItemCard(item, source) {
 
 function buildEmpty(day) {
   const d = el('div', 'empty');
+  const firstRun = state.sources.length === 0;
+  const standalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
   d.innerHTML =
     '<div class="empty-glyph" aria-hidden="true">' + ICONS.calendar + '</div>' +
-    '<h3>' + (dayKey(day) === dayKey(todayMidnight()) ? 'Nothing on today’s feed yet' : 'Nothing on this day') + '</h3>' +
-    '<p>' + (dayKey(day) === dayKey(todayMidnight())
-      ? 'Add a source and Dispatch will gather its recent items here.'
-      : 'No items were published on this day. Swipe to another day.') + '</p>' +
-    '<span class="pill pill--primary" data-action="add-source">Add a source</span>';
+    '<h3>' + (firstRun ? 'Start your feed' : (dayKey(day) === dayKey(todayMidnight()) ? 'Nothing on today’s feed yet' : 'Nothing on this day')) + '</h3>' +
+    '<p>' + (firstRun
+      ? 'Dispatch is private and local. Add a source and your feed history stays on this device.'
+      : (dayKey(day) === dayKey(todayMidnight())
+        ? 'Add a source and Dispatch will gather its recent items here.'
+        : 'No items were published on this day. Swipe to another day.')) + '</p>' +
+    (firstRun && !standalone ? '<p class="empty-install">On iPhone: Share → Add to Home Screen.</p>' : '') +
+    '<button type="button" class="pill pill--primary" data-action="add-source">Add a source</button>';
   d.querySelector('[data-action="add-source"]').addEventListener('click', () => openSheet('source'));
   return d;
 }
@@ -901,8 +940,8 @@ function renderDay() {
   $('#nav-title').textContent = navTitle(day);
 }
 
-function renderAll() {
-  renderStrip();
+function renderAll(options = {}) {
+  renderStrip(options);
   renderDay();
   renderSourcesList();
 }
@@ -922,9 +961,10 @@ function sourceSub(source) {
 function buildSourceRow(source, onDelete) {
   const row = el('div', 'source-row');
   row.dataset.id = source.id;
+  const letter = esc(source.title.trim()[0].toUpperCase() || '?');
   const icon = source.iconUrl
-    ? '<img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">'
-    : esc(source.title.trim()[0].toUpperCase() || '?');
+    ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">'
+    : letter;
   row.innerHTML =
     '<div class="source-icon" aria-hidden="true">' + icon + '</div>' +
     '<div class="s-text">' +
@@ -987,7 +1027,7 @@ function renderSourcesList() {
       '<div class="empty-glyph" aria-hidden="true">' + ICONS.text + '</div>' +
       '<h3>No sources yet</h3>' +
       '<p>Add a Substack, a YouTube channel, a podcast or any RSS feed.</p>' +
-      '<span class="pill pill--primary" data-action="add-source">Add a source</span>';
+      '<button type="button" class="pill pill--primary" data-action="add-source">Add a source</button>';
     empty.querySelector('[data-action="add-source"]').addEventListener('click', () => openSheet('source'));
     list.appendChild(empty);
   } else {
@@ -1054,59 +1094,24 @@ function fieldRow(icon, placeholder, inputAttrs) {
   return { wrap, input };
 }
 
-function previewCard() {
-  const card = el('div', 'preview-card');
-  card.id = 'preview-card';
-  return card;
-}
-
-async function probePreview(url) {
-  const card = $('#preview-card');
-  if (!card) return;
-  try {
-    const resolved = await resolveFeedUrl(url);
-    if (resolved.kind === 'video') {
-      card.innerHTML =
-        '<div class="pc-head">' + kindBadge('youtube') + '<span class="pc-title">' + esc(resolved.title) + '</span><span class="pc-tag">Video</span></div>' +
-        (resolved.author ? '<div class="pc-sub">' + esc(resolved.author) + '</div>' : '') +
-        '<div class="pc-samples">Single video — paste the channel page URL to follow it.</div>';
-      return;
-    }
-    const feedUrl = resolved.feedUrl;
-    if (state.sources.some((s) => s.feedUrl === feedUrl)) {
-      card.innerHTML = '<p class="pc-error">Already added — this source is in your list.</p>';
-      return;
-    }
-    const text = await fetchFeed(feedUrl);
-    const parsed = parseFeed(text, feedUrl);
-    let type = resolved.type;
-    if (parsed.items.some((i) => i.kind === 'podcast')) type = 'podcast';
-    const tag = type === 'youtube' ? 'YouTube' : type === 'podcast' ? 'Podcast' : 'Text';
-    card.innerHTML =
-      '<div class="pc-head">' + kindBadge(type === 'youtube' ? 'youtube' : type === 'podcast' ? 'podcast' : 'article') +
-        '<span class="pc-title">' + esc(parsed.feedTitle) + '</span><span class="pc-tag">' + tag + '</span></div>' +
-      '<div class="pc-sub">' + esc(hostOf(feedUrl)) + '</div>' +
-      '<div class="pc-samples">' + esc(parsed.items.slice(0, 3).map((i) => i.title).join(' · ')) + '</div>';
-  } catch (err) {
-    card.innerHTML = '<p class="pc-error">' + esc(err && err.message ? err.message : 'Could not read this link.') + '</p>';
-  }
-}
-
-let probeTimer = null;
-
 function buildSourceSheet() {
   const body = $('#sheet-body');
   body.innerHTML = '';
-  const urlRow = fieldRow(ICONS.link, 'Link or feed URL (https://…)');
+  const urlRow = fieldRow(ICONS.link, 'Feed or channel URL');
+  urlRow.input.type = 'url';
+  urlRow.input.inputMode = 'url';
+  urlRow.input.enterKeyHint = 'done';
+
   const nav = sheetNav('Add Source', 'Add', async () => {
     const btn = nav.querySelector('[data-sheet-action]');
-    if (btn.dataset.busy) return;
+    const url = urlRow.input.value.trim();
+    if (!url || btn.dataset.busy) return;
     btn.dataset.busy = '1';
     btn.textContent = 'Adding…';
     btn.classList.add('nav-btn--disabled');
     urlRow.input.disabled = true;
     try {
-      const src = await addSource(urlRow.input.value);
+      const src = await addSource(url);
       closeSheet();
       toast('Added “' + src.title + '”');
     } catch (err) {
@@ -1115,25 +1120,27 @@ function buildSourceSheet() {
       btn.classList.remove('nav-btn--disabled');
       urlRow.input.disabled = false;
       toast(err && err.message ? err.message : 'Could not add this source.');
+      urlRow.input.focus();
     }
   }, false);
 
   body.appendChild(nav);
   body.appendChild(el('div', 'field-label', 'URL'));
   body.appendChild(urlRow.wrap);
-  body.appendChild(previewCard());
 
-  urlRow.input.addEventListener('input', () => {
-    const v = urlRow.input.value.trim();
-    if (probeTimer) clearTimeout(probeTimer);
-    if (v.length < 8) {
-      const pc = $('#preview-card');
-      if (pc) pc.innerHTML = '';
-      nav.querySelector('[data-sheet-action]').classList.add('nav-btn--disabled');
-      return;
+  const action = nav.querySelector('[data-sheet-action]');
+  const updateAction = () => {
+    const hasUrl = urlRow.input.value.trim().length >= 8;
+    action.classList.toggle('nav-btn--disabled', !hasUrl || !!action.dataset.busy);
+  };
+  urlRow.input.addEventListener('input', updateAction);
+  urlRow.input.addEventListener('change', updateAction);
+  urlRow.input.addEventListener('paste', () => setTimeout(updateAction, 0));
+  urlRow.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !action.classList.contains('nav-btn--disabled')) {
+      e.preventDefault();
+      action.click();
     }
-    nav.querySelector('[data-sheet-action]').classList.remove('nav-btn--disabled');
-    probeTimer = setTimeout(() => probePreview(v), 700);
   });
   urlRow.input.focus();
 }
@@ -1151,11 +1158,13 @@ function toast(msg) {
 
 /* ---------------- Day navigation + swipe pager ---------------- */
 
-function setDay(d, animate) {
+function setDay(d, options = {}) {
   const next = addDays(d, 0);
   next.setHours(0, 0, 0, 0);
   state.day = next;
-  renderAll();
+  // Every intentional focus change recentres the complete carousel. The
+  // spotlight settle calls this too, so the selected circle cannot drift.
+  renderAll({ center: options.center !== false, smooth: options.smooth !== false });
 }
 
 function goToDay(offset) {
@@ -1312,14 +1321,12 @@ function initSheetDismiss() {
   // Native iOS sheet behaviour: drag down from the grabber (or from a
   // scrolled-to-top body) to dismiss; release past the threshold to close.
   const sheet = sheetEl();
-  const body = $('#sheet-body');
   let startY = null, dy = 0, dragging = false;
 
   sheet.addEventListener('touchstart', (e) => {
-    if (!sheetEl().hidden) return;
+    if (sheetEl().hidden) return;
     const onGrabber = !!e.target.closest('#sheet-grabber');
-    const atTop = body.scrollTop <= 0;
-    if (!onGrabber && !atTop) return;
+    if (!onGrabber) return;
     startY = e.touches[0].clientY;
     dy = 0;
     dragging = false;
@@ -1369,7 +1376,7 @@ function initStripSpotlight() {
     }
     if (best) {
       const key = best.dataset.day;
-      if (key && key !== dayKey(state.day)) setDay(fromDayKey(key));
+      if (key && key !== dayKey(state.day)) setDay(fromDayKey(key), { center: true, smooth: false });
     }
   };
   strip.addEventListener('scroll', () => {
