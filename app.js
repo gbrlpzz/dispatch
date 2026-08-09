@@ -101,7 +101,6 @@ const state = {
   day: todayMidnight(),
   sources: [],
   items: [],
-  pins: [],
   db: null,
   fetching: false,
   stripRange: null, // { start: Date, end: Date }
@@ -129,10 +128,6 @@ function openDB() {
         it.createIndex('day', 'day');
         it.createIndex('sourceId', 'sourceId');
         it.createIndex('guid', ['sourceId', 'guid'], { unique: true });
-      }
-      if (!db.objectStoreNames.contains('pins')) {
-        const p = db.createObjectStore('pins', { keyPath: 'id', autoIncrement: true });
-        p.createIndex('day', 'day');
       }
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
     };
@@ -278,6 +273,15 @@ function attrOf(node, names) {
   return '';
 }
 
+function firstImage(html) {
+  if (!html) return '';
+  const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (m) return m[1];
+  const m2 = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+  if (m2) return m2[1];
+  return '';
+}
+
 function parseDate(str) {
   if (!str) return null;
   const t = Date.parse(str);
@@ -331,7 +335,9 @@ function parseRssItem(it) {
   const guid = childText(it, ['guid']) || childText(it, ['id']) || link;
   const pub = parseDate(childText(it, ['pubDate', 'date', 'published']));
   const author = childText(it, ['creator', 'author']) || '';
-  const summary = truncate(stripHtml(childText(it, ['description', 'encoded', 'summary'])), 340);
+  const descHtml = childText(it, ['description']);
+  const contentHtml = childText(it, ['encoded', 'content']);
+  const summary = truncate(stripHtml(descHtml || contentHtml), 340);
 
   const enclosure = localChildren(it, 'enclosure')[0];
   const encUrl = enclosure ? enclosure.getAttribute('url') || '' : '';
@@ -343,14 +349,16 @@ function parseRssItem(it) {
   // media group / thumbnail / content
   const mediaGroup = localChildren(it, 'group')[0] || it;
   let thumb = childAttr(mediaGroup, ['thumbnail', 'content'], 'url') || childAttr(it, ['thumbnail', 'content'], 'url');
-  if (!thumb) thumb = encType && isImage ? encUrl : '';
+  if (!thumb && isImage) thumb = encUrl;
   const mediaDur = parseDuration(attrOf(mediaGroup, ['duration']) || attrOf(it, ['duration']));
 
   const itunesDur = parseDuration(childText(it, ['duration']));
   const duration = itunesDur || mediaDur || null;
 
   const kind = isAudio ? 'podcast' : 'article';
-  const image = kind === 'podcast' ? (childAttr(it, ['image'], 'href') || thumb || '') : (thumb || '');
+  const image = kind === 'podcast'
+    ? (childAttr(it, ['image'], 'href') || thumb || '')
+    : (thumb || firstImage(contentHtml || descHtml) || '');
 
   return {
     guid: guid || (link + title),
@@ -383,7 +391,8 @@ function parseAtomItem(en) {
   const encType = enclosure ? enclosure.getAttribute('type') || '' : '';
   const isAudio = /^audio\//.test(encType);
 
-  const summary = truncate(stripHtml(childText(en, ['summary', 'content'])), 340);
+  const contentHtml = childText(en, ['summary', 'content']);
+  const summary = truncate(stripHtml(contentHtml), 340);
 
   const videoId = childText(en, ['videoId']) ||
     (String(guid || '').match(/^yt:video:(.+)$/) || [])[1] || '';
@@ -392,7 +401,7 @@ function parseAtomItem(en) {
   const kind = isAudio ? 'podcast' : (isYouTube ? 'youtube' : 'article');
   const image = isYouTube
     ? (thumb || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg')
-    : (thumb || (isAudio ? childAttr(en, ['image'], 'href') : ''));
+    : (thumb || firstImage(contentHtml) || (isAudio ? childAttr(en, ['image'], 'href') : ''));
 
   return {
     guid: guid || (link + title),
@@ -569,7 +578,7 @@ async function itunesLookup(showName) {
 async function addSource(rawUrl) {
   const resolved = await resolveFeedUrl(rawUrl);
   if (resolved.kind === 'video') {
-    throw new Error('That looks like a video link — use “Add Link to Day” for single links, or paste a channel page URL to follow the channel.');
+    throw new Error('That looks like a single video — paste the channel page URL to follow the channel.');
   }
   const feedUrl = resolved.feedUrl;
 
@@ -598,7 +607,7 @@ async function addSource(rawUrl) {
     title: parsed.feedTitle,
     type,
     siteUrl,
-    iconUrl: parsed.feedIcon || '',
+    iconUrl: parsed.feedIcon || ('https://' + hostOf(feedUrl) + '/favicon.ico'),
     itunesId,
     itunesUrl,
     addedAt: new Date().toISOString(),
@@ -624,7 +633,7 @@ async function fetchSource(sourceId, preParsed, preText) {
     }
     source.title = parsed.feedTitle || source.title;
     source.siteUrl = parsed.feedLink || source.siteUrl;
-    if (parsed.feedIcon) source.iconUrl = parsed.feedIcon;
+    source.iconUrl = parsed.feedIcon || source.iconUrl || ('https://' + hostOf(source.feedUrl) + '/favicon.ico');
 
     const now = new Date().toISOString();
     const normalized = [];
@@ -710,45 +719,6 @@ async function removeSource(id) {
   renderAll();
 }
 
-/* ---------------- Pins ---------------- */
-
-async function addPin({ day, url, note }) {
-  const target = normalizeUrl(url);
-  let title = hostOf(target);
-  let image = '';
-  let kind = 'link';
-  const u = new URL(target);
-  const host = u.hostname.replace(/^www\./, '').toLowerCase();
-  if (host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be') {
-    const em = await oembed(target);
-    if (em) { title = em.title; image = em.thumbnail_url || ''; }
-    kind = 'youtube';
-  } else {
-    const og = await ogFromPage(target);
-    if (og.title) title = og.title;
-    if (og.image) image = og.image;
-  }
-  const pin = {
-    day,
-    url: target,
-    title: truncate(title, 200),
-    note: String(note || '').trim(),
-    imageUrl: image,
-    kind,
-    createdAt: new Date().toISOString(),
-  };
-  const id = await storePut('pins', pin);
-  pin.id = id;
-  state.pins.push(pin);
-  renderAll();
-}
-
-async function removePin(id) {
-  await storeDelete('pins', id);
-  state.pins = state.pins.filter((p) => p.id !== id);
-  renderAll();
-}
-
 /* ---------------- Rendering: strip ---------------- */
 
 const STRIP_BACK = 120, STRIP_FWD = 14, STRIP_EXTEND = 30;
@@ -778,7 +748,6 @@ function renderStrip() {
     ? (prevSel.offsetLeft >= prevScrollLeft - 8 && prevSel.offsetLeft + prevSel.clientWidth <= prevScrollLeft + strip.clientWidth + 8)
     : false;
   const frag = document.createDocumentFragment();
-  const wdFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
   for (let d = state.stripRange.start; d <= state.stripRange.end; d = addDays(d, 1)) {
     const key = dayKey(d);
     let cls = 'bubble';
@@ -787,9 +756,12 @@ function renderStrip() {
     else if (d < today) cls += ' bubble--past';
     else cls += ' bubble--future';
     const b = el('button', cls);
-    b.setAttribute('aria-label', d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
+    b.setAttribute('aria-label', d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
     b.dataset.day = key;
-    b.innerHTML = '<span class="wd">' + esc(wdFmt.format(d)) + '</span><span class="dn">' + d.getDate() + '</span>';
+    // Live date, day/month, no weekday — “09/08” for 9 August.
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    b.innerHTML = '<span class="dn">' + dd + '/' + mm + '</span>';
     frag.appendChild(b);
   }
   strip.innerHTML = '';
@@ -893,37 +865,6 @@ function buildItemCard(item, source) {
   return card;
 }
 
-function buildPinCard(pin) {
-  const card = el('a', 'card pin-card');
-  card.href = pin.url || '#';
-  card.target = '_blank';
-  card.rel = 'noopener noreferrer';
-
-  let media = '';
-  if (pin.imageUrl && pin.kind === 'youtube') {
-    media = '<div class="card-media">' +
-      '<img src="' + esc(pin.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
-      '</div>';
-  }
-
-  card.innerHTML =
-    media +
-    '<div class="pin-head">' + ICONS.pin + '<span>Pinned</span>' +
-      '<span class="relative-time">' + esc(timeAgo(pin.createdAt)) + '</span>' +
-      '<button class="pin-remove" aria-label="Remove this pinned link">' + ICONS.xmark + '</button>' +
-    '</div>' +
-    '<h3 class="card-title">' + esc(pin.title) + '</h3>' +
-    (pin.note ? '<p class="pin-note">' + esc(pin.note) + '</p>' : '') +
-    '<p class="pin-host">' + esc(hostOf(pin.url)) + '</p>' +
-    '<span class="pill"><span>Open</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
-  card.querySelector('.pin-remove').addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    removePin(pin.id);
-  });
-  return card;
-}
-
 function buildEmpty(day) {
   const d = el('div', 'empty');
   d.innerHTML =
@@ -931,11 +872,9 @@ function buildEmpty(day) {
     '<h3>' + (dayKey(day) === dayKey(todayMidnight()) ? 'Nothing on today’s feed yet' : 'Nothing on this day') + '</h3>' +
     '<p>' + (dayKey(day) === dayKey(todayMidnight())
       ? 'Add a source and Dispatch will gather its recent items here.'
-      : 'No items were published on this day. Swipe to another day or add a link.') + '</p>' +
-    '<span class="pill pill--primary" data-action="add-source">Add a source</span>' +
-    '<span class="pill" data-action="add-link">Add a link to this day</span>';
+      : 'No items were published on this day. Swipe to another day.') + '</p>' +
+    '<span class="pill pill--primary" data-action="add-source">Add a source</span>';
   d.querySelector('[data-action="add-source"]').addEventListener('click', () => openSheet('source'));
-  d.querySelector('[data-action="add-link"]').addEventListener('click', () => openSheet('link'));
   return d;
 }
 
@@ -946,24 +885,14 @@ function renderDay() {
   const items = state.items
     .filter((i) => i.day === key)
     .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
-  const pins = state.pins
-    .filter((p) => p.day === key)
-    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
 
   const frag = document.createDocumentFragment();
-  if (pins.length) {
-    frag.appendChild(el('div', 'day-header', 'Pinned'));
-    for (const p of pins) frag.appendChild(buildPinCard(p));
+  for (const it of items) {
+    const src = srcById.get(it.sourceId);
+    frag.appendChild(buildItemCard(it, src));
   }
-  if (items.length) {
-    if (pins.length) frag.appendChild(el('div', 'day-header', 'Feed'));
-    for (const it of items) {
-      const src = srcById.get(it.sourceId);
-      frag.appendChild(buildItemCard(it, src));
-    }
-  }
-  if (!pins.length && !items.length) {
+  if (!items.length) {
     frag.appendChild(buildEmpty(day));
   }
 
@@ -1069,9 +998,11 @@ function renderSourcesList() {
 /* ---------------- Sheets ---------------- */
 
 let sheetMode = null;
+let sheetOpener = null;
 
 function openSheet(mode) {
   sheetMode = mode;
+  sheetOpener = document.activeElement;
   $('#backdrop').hidden = false;
   const sheet = sheetEl();
   sheet.hidden = false;
@@ -1083,15 +1014,18 @@ function closeSheet() {
   const sheet = sheetEl();
   sheet.classList.remove('sheet-open');
   $('#backdrop').hidden = true;
-  setTimeout(() => { sheet.hidden = true; sheetMode = null; }, 380);
+  setTimeout(() => {
+    sheet.hidden = true;
+    sheetMode = null;
+    if (sheetOpener && document.contains(sheetOpener)) sheetOpener.focus();
+    sheetOpener = null;
+  }, 380);
 }
 
 function buildSheet(mode) {
   const body = $('#sheet-body');
   body.innerHTML = '';
-  if (mode === 'menu') return buildMenuSheet();
   if (mode === 'source') return buildSourceSheet();
-  if (mode === 'link') return buildLinkSheet();
 }
 
 function sheetNav(title, actionLabel, onAction, actionEnabled) {
@@ -1105,26 +1039,6 @@ function sheetNav(title, actionLabel, onAction, actionEnabled) {
   action.addEventListener('click', onAction);
   if (actionEnabled) action.classList.remove('nav-btn--disabled');
   return nav;
-}
-
-function buildMenuSheet() {
-  const body = $('#sheet-body');
-  const card = el('div', 'source-group');
-  const src = el('button', 'source-row');
-  src.innerHTML =
-    '<div class="source-icon" aria-hidden="true">' + KIND_META.article.icon + '</div>' +
-    '<div class="s-text"><div class="s-title">Add Source</div><div class="s-sub">Substack, YouTube channel, podcast or RSS</div></div>' +
-    '<span class="s-chevron" aria-hidden="true">' + ICONS.chevron + '</span>';
-  const pin = el('button', 'source-row');
-  pin.innerHTML =
-    '<div class="source-icon" aria-hidden="true">' + ICONS.link + '</div>' +
-    '<div class="s-text"><div class="s-title">Add Link to Day</div><div class="s-sub">Save anything for a specific day</div></div>' +
-    '<span class="s-chevron" aria-hidden="true">' + ICONS.chevron + '</span>';
-  src.addEventListener('click', () => buildSheet('source'));
-  pin.addEventListener('click', () => buildSheet('link'));
-  card.appendChild(src);
-  card.appendChild(pin);
-  body.appendChild(card);
 }
 
 function fieldRow(icon, placeholder, inputAttrs) {
@@ -1143,7 +1057,6 @@ function fieldRow(icon, placeholder, inputAttrs) {
 function previewCard() {
   const card = el('div', 'preview-card');
   card.id = 'preview-card';
-  card.innerHTML = '<p class="pc-error">Paste a link to see what Dispatch detects.</p>';
   return card;
 }
 
@@ -1156,7 +1069,7 @@ async function probePreview(url) {
       card.innerHTML =
         '<div class="pc-head">' + kindBadge('youtube') + '<span class="pc-title">' + esc(resolved.title) + '</span><span class="pc-tag">Video</span></div>' +
         (resolved.author ? '<div class="pc-sub">' + esc(resolved.author) + '</div>' : '') +
-        '<div class="pc-samples">Single link — use “Add Link to Day”.</div>';
+        '<div class="pc-samples">Single video — paste the channel page URL to follow it.</div>';
       return;
     }
     const feedUrl = resolved.feedUrl;
@@ -1215,54 +1128,12 @@ function buildSourceSheet() {
     if (probeTimer) clearTimeout(probeTimer);
     if (v.length < 8) {
       const pc = $('#preview-card');
-      if (pc) pc.innerHTML = '<p class="pc-error">Paste a link to see what Dispatch detects.</p>';
+      if (pc) pc.innerHTML = '';
       nav.querySelector('[data-sheet-action]').classList.add('nav-btn--disabled');
       return;
     }
     nav.querySelector('[data-sheet-action]').classList.remove('nav-btn--disabled');
     probeTimer = setTimeout(() => probePreview(v), 700);
-  });
-  urlRow.input.focus();
-}
-
-function buildLinkSheet() {
-  const body = $('#sheet-body');
-  body.innerHTML = '';
-  const urlRow = fieldRow(ICONS.link, 'https://…');
-  const noteRow = fieldRow(ICONS.text, 'Note (optional)');
-  const dateRow = el('div', 'field');
-  dateRow.innerHTML = '<span aria-hidden="true">' + ICONS.calendar + '</span>';
-  const dateInput = document.createElement('input');
-  dateInput.type = 'date';
-  dateInput.value = dayKey(state.day);
-  dateInput.setAttribute('aria-label', 'Day');
-  dateRow.appendChild(dateInput);
-
-  const nav = sheetNav('Add Link to Day', 'Add', async () => {
-    try {
-      await addPin({
-        day: dateInput.value || dayKey(state.day),
-        url: urlRow.input.value,
-        note: noteRow.input.value,
-      });
-      closeSheet();
-      toast('Saved to ' + (dateInput.value || dayKey(state.day)));
-    } catch (err) {
-      toast(err && err.message ? err.message : 'Could not add this link.');
-    }
-  }, false);
-
-  body.appendChild(nav);
-  body.appendChild(el('div', 'field-label', 'URL'));
-  body.appendChild(urlRow.wrap);
-  body.appendChild(el('div', 'field-label', 'Note'));
-  body.appendChild(noteRow.wrap);
-  body.appendChild(el('div', 'field-label', 'Day'));
-  body.appendChild(dateRow.wrap);
-
-  urlRow.input.addEventListener('input', () => {
-    const v = urlRow.input.value.trim();
-    nav.querySelector('[data-sheet-action]').classList.toggle('nav-btn--disabled', v.length < 8);
   });
   urlRow.input.focus();
 }
@@ -1395,12 +1266,19 @@ function initPullToRefresh() {
   const end = () => {
     if (!pulling) return;
     pulling = false;
-    indicator.style.transform = 'translateY(0)';
-    indicator.style.opacity = '0';
-    setTimeout(() => { indicator.hidden = true; }, 300);
     if (dy >= 60) {
+      indicator.style.transform = 'translateY(0)';
+      indicator.style.opacity = '1';
+      indicator.hidden = false;
       toast('Refreshing…');
-      refreshAll(true);
+      refreshAll(true).finally(() => {
+        indicator.style.opacity = '0';
+        setTimeout(() => { indicator.hidden = true; }, 300);
+      });
+    } else {
+      indicator.style.transform = 'translateY(0)';
+      indicator.style.opacity = '0';
+      setTimeout(() => { indicator.hidden = true; }, 300);
     }
     dy = 0;
   };
@@ -1430,9 +1308,84 @@ function initPullToRefresh() {
 
 /* ---------------- Navigation wiring ---------------- */
 
+function initSheetDismiss() {
+  // Native iOS sheet behaviour: drag down from the grabber (or from a
+  // scrolled-to-top body) to dismiss; release past the threshold to close.
+  const sheet = sheetEl();
+  const body = $('#sheet-body');
+  let startY = null, dy = 0, dragging = false;
+
+  sheet.addEventListener('touchstart', (e) => {
+    if (!sheetEl().hidden) return;
+    const onGrabber = !!e.target.closest('#sheet-grabber');
+    const atTop = body.scrollTop <= 0;
+    if (!onGrabber && !atTop) return;
+    startY = e.touches[0].clientY;
+    dy = 0;
+    dragging = false;
+  }, { passive: true });
+
+  sheet.addEventListener('touchmove', (e) => {
+    if (startY == null) return;
+    const y = e.touches[0].clientY;
+    const d = y - startY;
+    if (d <= 0) return;
+    dragging = true;
+    dy = Math.min(220, d * 0.6);
+    sheet.style.transition = 'none';
+    sheet.style.transform = 'translateY(' + dy + 'px)';
+  }, { passive: true });
+
+  const end = () => {
+    if (startY == null) return;
+    startY = null;
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = '';
+    if (dy >= 110) {
+      closeSheet();
+    } else {
+      sheet.style.transform = 'translateY(0)';
+    }
+    dy = 0;
+  };
+  sheet.addEventListener('touchend', end);
+  sheet.addEventListener('touchcancel', end);
+}
+
+function initStripSpotlight() {
+  // Scrolling the strip moves the whole carousel through a fixed centre;
+  // the date that lands in the centre becomes the selected day.
+  const strip = $('#strip');
+  let timer = null;
+  const settle = () => {
+    const rect = strip.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    let best = null, bestD = Infinity;
+    for (const b of strip.querySelectorAll('.bubble')) {
+      const r = b.getBoundingClientRect();
+      const d = Math.abs((r.left + r.width / 2) - cx);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (best) {
+      const key = best.dataset.day;
+      if (key && key !== dayKey(state.day)) setDay(fromDayKey(key));
+    }
+  };
+  strip.addEventListener('scroll', () => {
+    clearTimeout(timer);
+    timer = setTimeout(settle, 140);
+  }, { passive: true });
+  if ('onscrollend' in strip) {
+    strip.addEventListener('scrollend', () => { clearTimeout(timer); settle(); });
+  }
+}
+
 function initNav() {
   $('#today-btn').addEventListener('click', () => setDay(todayMidnight()));
-  $('#add-btn').addEventListener('click', () => openSheet('menu'));
+  $('#add-btn').addEventListener('click', () => openSheet('source'));
+  $('#sources-btn').addEventListener('click', () => { $('#sources-screen').hidden = false; });
+  $('#sources-done').addEventListener('click', () => { $('#sources-screen').hidden = true; });
 
   $('#strip').addEventListener('click', (e) => {
     const b = e.target.closest('.bubble');
@@ -1442,7 +1395,6 @@ function initNav() {
 
   $('#backdrop').addEventListener('click', closeSheet);
 
-  $('#sources-done').addEventListener('click', () => { $('#sources-screen').hidden = true; });
   $('#sources-add').addEventListener('click', () => openSheet('source'));
 }
 
@@ -1480,19 +1432,24 @@ async function init() {
 
   state.sources = await storeGetAll('sources');
   state.items = await storeGetAll('items');
-  state.pins = await storeGetAll('pins');
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
 
   initNav();
   initSwipe();
+  initStripSpotlight();
+  initSheetDismiss();
   initPullToRefresh();
   initAutoRefresh();
 
   renderAll();
   maybeAutoRefresh();
 
-  // keyboard day navigation
+  // keyboard: day navigation, ESC to close overlays
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!sourcesScreenEl().hidden) { sourcesScreenEl().hidden = true; return; }
+      if (!sheetEl().hidden) { closeSheet(); return; }
+    }
     if (!sheetEl().hidden || !sourcesScreenEl().hidden) return;
     if (e.key === 'ArrowLeft') goToDay(-1);
     else if (e.key === 'ArrowRight') goToDay(1);

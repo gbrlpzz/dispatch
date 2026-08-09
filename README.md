@@ -16,7 +16,7 @@ Everything runs in your browser and everything stays on your device:
 - **No account, no backend, no central infrastructure.** Dispatch is a static
   PWA — anyone can host it (or just open the hosted version) and get a
   personalized feed.
-- **Local persistence.** Sources, items and pinned links live in IndexedDB on
+- **Local persistence.** Sources and feed items live in IndexedDB on
   your device, and Dispatch asks the browser for persistent storage, so your
   history survives restarts and works offline.
 - **Local feed pulling.** Feed fetching happens in your browser. Feeds that
@@ -26,19 +26,20 @@ Everything runs in your browser and everything stays on your device:
 
 ## Features
 
-- **Arranged by day.** A scrollable strip of day bubbles (today marked with an
-  outline, the selected day filled), a date title, and a swipeable day view —
-  built to the Apple Human Interface Guidelines with a monochrome palette that
-  follows light/dark appearance. Swiping beats scrolling: one day, one glance.
-- **Three kinds of sources.**
-  - *Text* — Substack and any RSS/Atom feed, with cover image, byline and a
-    pulled summary.
+- **Arranged by day.** A spotlight carousel of circular day bubbles: scroll
+  the strip and dates slide through a fixed centre — whatever lands there
+  becomes the selected day. The date title stays perfectly centred, and the
+  day view swipes left and right like a pager. Built to the Apple Human
+  Interface Guidelines with a monochrome palette that follows light/dark
+  appearance. Swiping beats scrolling: one day, one glance.
+- **Three kinds of sources, fully extracted.**
+  - *Text* — Substack and any RSS/Atom feed: cover image (pulled from the
+    post's media or first embedded image), byline, and a pulled summary.
   - *Video* — YouTube channels, with thumbnail, title, channel and a duration
     badge where the feed provides one.
-  - *Podcast* — any audio RSS feed, with artwork, show name and a link into
-    Apple Podcasts (resolved via the iTunes search API at add time).
-- **Add a link to any day.** Pin any URL to a specific day with an optional
-  note; it becomes a card on that day.
+  - *Podcast* — any audio RSS feed, with artwork, show name, episode duration
+    and a link into Apple Podcasts (resolved via the iTunes search API at add
+    time).
 - **Manage sources.** A Sources screen lists everything you follow, with
   swipe-to-delete. Removing a source removes its items from the past, the
   present and the future.
@@ -60,8 +61,8 @@ Everything runs in your browser and everything stays on your device:
    YouTube channel feed). Each item is bucketed into the *device-local* day
    its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
 3. **The calendar.** The strip covers roughly 4 months back and 2 weeks
-   forward from today, extending as you scroll. The day view shows that
-   day's pinned links, then its feed items newest-first.
+   forward from today, extending as you scroll. Each bubble shows a live
+   day/month date; the day view shows that day's feed items newest-first.
 4. **Refresh scheduling.** There is no background daemon — iOS doesn't allow
    web apps to fetch in the background. Instead Dispatch refreshes whenever
    you open it or bring it to the foreground if any source is older than 12
@@ -126,12 +127,16 @@ Apple's iTunes Search API (podcast lookup), and YouTube's oEmbed endpoint
 
 ## Design
 
-Monochrome Apple Human Interface Guidelines: system grouped background and
-card surfaces, label/secondary/tertiary text, opaque separators, system-fill
-pills, continuous-corner cards, SF-style glyphs drawn inline, the iOS motion
-curves, light and dark appearance, safe-area insets, and a full-screen
-standalone experience on iPhone. Every accent is pure black in light mode and
-pure white in dark mode — nothing else, so it reads as one system.
+Monochrome Apple Human Interface Guidelines, using the neutral greys from
+gabrielepizzi.com (gbrlpzz/index). System grouped background and card
+surfaces, translucent blurred navigation bars, label/secondary/tertiary text,
+system-fill pills, continuous-corner cards, SF-style glyphs drawn inline,
+the iOS motion curves, light and dark appearance, safe-area insets, and a
+full-screen standalone experience on iPhone. Text is sized in rem against the
+system body font, so iOS Dynamic Type scales the whole interface; the
+`prefers-reduced-motion` setting is honoured; every touch target meets the
+44pt HIG minimum. Every accent is pure black in light mode and pure white in
+dark mode — nothing else, so it reads as one system.
 
 ## License
 
