@@ -1586,6 +1586,15 @@ function buildEmpty(day) {
   return d;
 }
 
+function buildAppCredit() {
+  const footer = el('footer', 'app-footer');
+  footer.setAttribute('aria-label', 'Dispatch');
+  footer.innerHTML =
+    '<span class="app-footer__brand">dispatch</span>' +
+    '<span class="app-footer__byline">by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">gbrlpzz</a></span>';
+  return footer;
+}
+
 function renderDay() {
   const day = state.day;
   const key = dayKey(day);
@@ -1603,6 +1612,7 @@ function renderDay() {
   if (!items.length) {
     frag.appendChild(buildEmpty(day));
   }
+  frag.appendChild(buildAppCredit());
 
   view.innerHTML = '';
   view.appendChild(frag);

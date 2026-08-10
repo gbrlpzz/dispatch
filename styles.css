@@ -632,14 +632,13 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
 
 /* ---------------- App credit ---------------- */
 
-#app-footer {
-  flex: none;
+.app-footer {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.28rem;
   min-height: 44px;
-  padding: 0 16px env(safe-area-inset-bottom);
+  margin: 0.71rem 16px 0;
   color: var(--tertiary);
   font-size: 0.647rem;                  /* 11pt */
   letter-spacing: -0.05px;
