@@ -1777,6 +1777,15 @@ function renderAll(options = {}) {
   if (state.db && !state.dayCache.has(key)) requestDayWindow(state.day);
 }
 
+function dismissBootScreen() {
+  const boot = $('#boot-screen');
+  if (!boot) return;
+  requestAnimationFrame(() => {
+    boot.classList.add('boot-screen--hidden');
+    setTimeout(() => boot.remove(), 260);
+  });
+}
+
 /* ---------------- Rendering: sources screen ---------------- */
 
 function typeLabel(t) {
@@ -2309,6 +2318,7 @@ async function init() {
   initAutoRefresh();
 
   renderAll();
+  dismissBootScreen();
   void Promise.all([
     upgradeYouTubeSourceIcons(),
     upgradeMissingArticleImages(),
@@ -2331,6 +2341,7 @@ async function init() {
 document.addEventListener('DOMContentLoaded', () => {
   init().catch((err) => {
     console.error(err);
+    dismissBootScreen();
     toast('Dispatch could not start: ' + (err && err.message ? err.message : err));
   });
 });
