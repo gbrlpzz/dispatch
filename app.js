@@ -539,6 +539,14 @@ function youtubeUserFromUrl(u) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+function substackHandleFromProfileUrl(u) {
+  if (!u || u.hostname.replace(/^www\./, '').toLowerCase() !== 'substack.com') return null;
+  const m = u.pathname.match(/^\/@([^/]+)\/?$/i);
+  if (!m) return null;
+  const handle = decodeURIComponent(m[1]);
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(handle) ? handle : null;
+}
+
 async function youtubeChannelIdFromPage(handleUrl) {
   const { text } = await fetchText(handleUrl);
   const m = text.match(/"channelId":"(UC[\w-]{22})"/) ||
@@ -712,6 +720,22 @@ async function resolveFeedUrl(raw, options = {}) {
   const host = u.hostname.replace(/^www\./, '').toLowerCase();
   const youtubeHost = isYouTubeHost(host);
   const substackHost = isSubstackHostname(host);
+  const substackProfileHandle = substackHandleFromProfileUrl(u);
+
+  // Substack profile links such as substack.com/@palladium point to the
+  // account's publication, whose feed lives at the corresponding subdomain.
+  // Keep the profile URL as the user-supplied source URL, but follow the
+  // publication feed so the app receives the actual posts.
+  if (substackProfileHandle) {
+    return {
+      kind: 'source',
+      type: 'article',
+      platform: 'substack',
+      url,
+      siteUrl: 'https://' + substackProfileHandle + '.substack.com',
+      feedUrl: 'https://' + substackProfileHandle + '.substack.com/feed',
+    };
+  }
 
   // Substack's publication feed is stable at /feed. Do not download the
   // heavy publication page first; persist the source immediately and let the
@@ -919,7 +943,7 @@ async function addSource(rawUrl) {
     title: resolved.title || hostOf(resolved.url),
     type: initialType,
     platform: resolved.platform || initialType,
-    siteUrl: resolved.url,
+    siteUrl: resolved.siteUrl || resolved.url,
     iconUrl: 'https://' + hostOf(feedUrl) + '/favicon.ico',
     channelId: resolved.channelId || null,
     channelUrl: resolved.channelUrl || null,
