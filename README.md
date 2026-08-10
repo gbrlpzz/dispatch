@@ -115,11 +115,14 @@ font); re-run it after touching the icon motif.
 The shipped `icons/icon-512.png` is the source of truth for the product mark.
 The repeatable Open Graph preview is maintained in
 [`gbrlpzz/preview`](https://github.com/gbrlpzz/preview): it uses that exact
-home-screen asset and real mobile captures, with the icon and screenshots
-top-aligned. The Dispatch lockup uses the same bold system type treatment as
-the mobile footer and the lowercase credit `by gbrlpzz`. Never recreate the
-mark with a font or generated artwork; update the preview provenance whenever
-the shipped icon changes.
+home-screen asset and the two exact real mobile captures. The deterministic
+card contract is `1200 × 630`, with an 80px outer rhythm, 320 × 650
+top-cropped iPhone windows at `x=440` and `x=800`, a 40px gap, 34px
+continuous corners, 5px dark bezels, and black Dynamic Island presentation
+layers. The Dispatch lockup uses weight 800 for `dispatch`, weight 700 for
+the lowercase credit `by gbrlpzz`, and the same 80px top/left rhythm. Never
+recreate the mark with a font or generated artwork; update the preview
+provenance whenever the shipped icon changes.
 
 ## Deploy
 
