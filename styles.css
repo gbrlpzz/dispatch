@@ -630,6 +630,36 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   padding: 4px 24px calc(18px + env(safe-area-inset-bottom));
 }
 
+/* ---------------- App credit ---------------- */
+
+#app-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  min-height: 44px;
+  padding: 0 16px env(safe-area-inset-bottom);
+  color: var(--tertiary);
+  font-size: 0.647rem;                  /* 11pt */
+  letter-spacing: -0.05px;
+}
+.app-footer__brand {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Helvetica, Arial, sans-serif;
+  font-size: 0.765rem;
+  font-weight: 900;
+  letter-spacing: -0.06em;
+}
+.app-footer__byline { white-space: nowrap; }
+.app-footer__byline a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: inherit;
+  text-decoration: none;
+}
+.app-footer__byline a:active { opacity: 0.55; }
+
 /* ---------------- Misc ---------------- */
 
 .mono-glyph { font-variant-numeric: tabular-nums; }
