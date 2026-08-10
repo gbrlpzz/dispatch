@@ -142,8 +142,7 @@ Apple's iTunes Search API (podcast lookup), and YouTube's oEmbed endpoint
 
 ## Design
 
-Monochrome Apple Human Interface Guidelines with a web implementation of the
-Liquid Glass material for navigation and interactive controls, using the neutral greys from
+Monochrome Apple Human Interface Guidelines, using the neutral greys from
 gabrielepizzi.com (gbrlpzz/index). System grouped background and card
 surfaces, translucent blurred navigation bars, label/secondary/tertiary text,
 system-fill pills, continuous-corner cards, SF-style glyphs drawn inline,
