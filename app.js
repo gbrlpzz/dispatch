@@ -134,11 +134,25 @@ const state = {
   fetching: false,
   fetchingSourceIds: new Set(),
   stripRange: null, // { start: Date, end: Date }
+  // Only the active rolling window is held in memory. IndexedDB remains the
+  // durable archive, so moving beyond the window never loses a saved item.
+  dayCache: new Map(),
+  dayRange: null,
+  dayLoadPromise: null,
+  dayLoadKey: null,
+  dayLoadToken: 0,
 };
 
 const STALE_OPEN_MS = 12 * 3600000;
 const STALE_IDLE_MS = 24 * 3600000;
 const SOURCE_SNAPSHOT_KEY = 'dispatch.source-snapshot.v1';
+
+// Keep today plus the six preceding calendar days ready on first launch.
+// One additional day stays warm as the forward buffer; the window slides one
+// day at a time as the selected date moves.
+const DAY_PRELOAD_BACK = 6;
+const DAY_BUFFER = 1;
+const DAY_CACHE_RETENTION = 1;
 
 const sheetEl = () => $('#sheet');
 const sourcesScreenEl = () => $('#sources-screen');
@@ -174,6 +188,15 @@ function idbReq(r) {
 async function storeGetAll(store) {
   const tx = state.db.transaction(store, 'readonly');
   return idbReq(tx.objectStore(store).getAll());
+}
+async function storeGetByDayRange(startKey, endKey) {
+  const tx = state.db.transaction('items', 'readonly');
+  const index = tx.objectStore('items').index('day');
+  return idbReq(index.getAll(IDBKeyRange.bound(startKey, endKey)));
+}
+async function storeGetBySourceId(sourceId) {
+  const tx = state.db.transaction('items', 'readonly');
+  return idbReq(tx.objectStore('items').index('sourceId').getAll(IDBKeyRange.only(sourceId)));
 }
 async function storePut(store, value) {
   const tx = state.db.transaction(store, 'readwrite');
@@ -261,6 +284,88 @@ async function deleteItemsByIds(ids) {
   const os = tx.objectStore('items');
   for (const id of ids) os.delete(id);
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+}
+
+/* ---------------- Rolling day cache ---------------- */
+
+function dayKeysBetween(start, end) {
+  const keys = [];
+  for (let d = addDays(start, 0); d <= end; d = addDays(d, 1)) keys.push(dayKey(d));
+  return keys;
+}
+
+function flattenDayCache() {
+  state.items = [];
+  for (const items of state.dayCache.values()) state.items.push(...items);
+}
+
+function invalidateDayCache() {
+  state.dayLoadToken++;
+  state.dayLoadPromise = null;
+  state.dayLoadKey = null;
+  state.dayCache.clear();
+  state.dayRange = null;
+  state.items = [];
+}
+
+async function loadDayWindow(center, token) {
+  if (!state.db) return;
+
+  const start = addDays(center, -DAY_PRELOAD_BACK);
+  const end = addDays(center, DAY_BUFFER);
+  const wanted = dayKeysBetween(start, end);
+  const missing = wanted.filter((key) => !state.dayCache.has(key));
+
+  if (missing.length) {
+    const rows = await storeGetByDayRange(missing[0], missing[missing.length - 1]);
+    // A refresh may have invalidated this read while it was in flight.
+    if (token !== state.dayLoadToken) return;
+
+    const grouped = new Map();
+    for (const row of rows) {
+      if (!grouped.has(row.day)) grouped.set(row.day, []);
+      grouped.get(row.day).push(row);
+    }
+    for (const key of missing) state.dayCache.set(key, grouped.get(key) || []);
+  }
+
+  if (token !== state.dayLoadToken) return;
+
+  const keepStart = dayKey(addDays(start, -DAY_CACHE_RETENTION));
+  const keepEnd = dayKey(addDays(end, DAY_CACHE_RETENTION));
+  for (const key of state.dayCache.keys()) {
+    if (key < keepStart || key > keepEnd) state.dayCache.delete(key);
+  }
+  state.dayRange = { start: dayKey(start), end: dayKey(end) };
+  flattenDayCache();
+}
+
+function requestDayWindow(center, renderWhenReady = true) {
+  const targetKey = dayKey(center);
+  if (state.dayLoadPromise && state.dayLoadKey === targetKey) return state.dayLoadPromise;
+
+  const token = ++state.dayLoadToken;
+  state.dayLoadKey = targetKey;
+  const promise = loadDayWindow(center, token)
+    .then(() => {
+      if (renderWhenReady && token === state.dayLoadToken && dayKey(state.day) === targetKey) renderDay();
+    })
+    .catch(() => {
+      // Keep navigation usable if IndexedDB is temporarily unavailable.
+      if (token === state.dayLoadToken && !state.dayCache.has(targetKey)) {
+        state.dayCache.set(targetKey, []);
+        flattenDayCache();
+        if (renderWhenReady && dayKey(state.day) === targetKey) renderDay();
+      }
+    });
+  state.dayLoadPromise = promise;
+  void promise.finally(() => {
+    if (state.dayLoadPromise === promise) {
+      state.dayLoadPromise = null;
+      state.dayLoadKey = null;
+    }
+  });
+  return promise;
 }
 
 /* ---------------- Feed fetching (local, in-browser) ---------------- */
@@ -724,14 +829,15 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
   const source = state.sources.find((candidate) => candidate.id === sourceId);
   if (!source || source.type !== 'article') return;
   const byGuid = new Map(candidates.filter((item) => item.imageUrl).map((item) => [item.guid, item.imageUrl]));
-  const updates = state.items
-    .filter((item) => item.sourceId === sourceId && byGuid.has(item.guid) && item.imageUrl !== byGuid.get(item.guid))
+  const existing = await storeGetBySourceId(sourceId);
+  const updates = existing
+    .filter((item) => byGuid.has(item.guid) && item.imageUrl !== byGuid.get(item.guid))
     .map((item) => Object.assign({}, item, { imageUrl: byGuid.get(item.guid) }));
   if (!updates.length) return;
 
   try {
     await storeBulkPut('items', updates);
-    state.items = await storeGetAll('items');
+    invalidateDayCache();
     renderAll();
   } catch (e) { /* keep the feed usable even if image enrichment cannot persist */ }
 }
@@ -743,8 +849,9 @@ async function upgradeMissingArticleImages() {
     return now - new Date(source.lastFetchedAt).getTime() <= STALE_OPEN_MS;
   });
   await Promise.all(articleSources.map(async (source) => {
-    const missing = state.items
-      .filter((item) => item.sourceId === source.id && !item.imageUrl && item.link)
+    const existing = await storeGetBySourceId(source.id);
+    const missing = existing
+      .filter((item) => !item.imageUrl && item.link)
       .map((item) => ({ guid: item.guid, link: item.link, imageUrl: '' }));
     if (missing.length) await enrichMissingArticleImages(source.id, missing);
   }));
@@ -1259,7 +1366,7 @@ async function fetchSource(sourceId, preParsed, preText) {
       });
     }
     // Upsert: keep existing ids for same (sourceId, guid)
-    const existing = state.items.filter((i) => i.sourceId === sourceId);
+    const existing = await storeGetBySourceId(sourceId);
     const byGuid = new Map(existing.map((i) => [i.guid, i]));
     const seen = new Set();
     const uniq = normalized.filter((n) => (seen.has(n.guid) ? false : (seen.add(n.guid), true)));
@@ -1280,7 +1387,7 @@ async function fetchSource(sourceId, preParsed, preText) {
     // Bounded history: keep the newest MAX_ITEMS_PER_SOURCE items per source,
     // prune the rest so local storage stays minimal but the archive persists.
     const MAX_ITEMS_PER_SOURCE = 4000;
-    const mine = state.items.filter((i) => i.sourceId === sourceId);
+    const mine = await storeGetBySourceId(sourceId);
     if (mine.length > MAX_ITEMS_PER_SOURCE) {
       mine.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
       const keep = new Set(mine.slice(0, MAX_ITEMS_PER_SOURCE).map((i) => i.id));
@@ -1290,10 +1397,9 @@ async function fetchSource(sourceId, preParsed, preText) {
       await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
     }
 
-    // Refresh in-memory items for this source
-    state.items = state.items.filter((i) => i.sourceId !== sourceId);
-    const fresh = await storeGetAll('items');
-    state.items = fresh;
+    // Keep the archive in IndexedDB, but rebuild only the active day window on
+    // the next render so refreshes do not pull the whole history into memory.
+    invalidateDayCache();
 
     source.lastFetchedAt = now;
     source.lastError = null;
@@ -1348,12 +1454,13 @@ async function purgeKnownYouTubeShorts(source) {
     const text = await fetchFeed(shortsFeedUrl);
     const parsed = parseFeed(text, shortsFeedUrl, { includeYouTubeShorts: true });
     const shortGuids = new Set(parsed.items.map((item) => item.guid));
-    const drop = state.items
-      .filter((item) => item.sourceId === source.id && (shortGuids.has(item.guid) || isFilteredYouTubeItem(item)))
+    const existing = await storeGetBySourceId(source.id);
+    const drop = existing
+      .filter((item) => shortGuids.has(item.guid) || isFilteredYouTubeItem(item))
       .map((item) => item.id);
     if (drop.length) {
       await deleteItemsByIds(drop);
-      state.items = await storeGetAll('items');
+      invalidateDayCache();
     }
     source.youtubeShortsCheckedAt = new Date().toISOString();
     await storePut('sources', source);
@@ -1393,14 +1500,14 @@ async function upgradeYouTubeSources() {
 async function removeSource(id) {
   await deleteSourceCascade(id);
   state.sources = state.sources.filter((s) => s.id !== id);
-  state.items = state.items.filter((i) => i.sourceId !== id);
+  invalidateDayCache();
   persistSourceSnapshot();
   renderAll();
 }
 
 /* ---------------- Rendering: strip ---------------- */
 
-const STRIP_BACK = 120, STRIP_FWD = 14, STRIP_EXTEND = 30;
+const STRIP_BACK = 6, STRIP_FWD = 1, STRIP_EXTEND = 1;
 
 function ensureStripRange() {
   const today = todayMidnight();
@@ -1410,13 +1517,13 @@ function ensureStripRange() {
   }
   const d = state.day;
   if (d < state.stripRange.start) {
-    state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
+    while (d < state.stripRange.start) state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
   } else if (d > state.stripRange.end) {
-    state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+    while (d > state.stripRange.end) state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
   }
 }
 
-function renderStrip({ center = false, smooth = false } = {}) {
+function renderStrip({ center = false, smooth = false, preserveAnchorKey = null, preserveAnchorOffset = 0 } = {}) {
   ensureStripRange();
   const strip = $('#strip');
   const today = todayMidnight();
@@ -1449,11 +1556,41 @@ function renderStrip({ center = false, smooth = false } = {}) {
     // A focused day is always the spotlight: move the whole carousel so the
     // selected circle, not just its black fill, is exactly at centre.
     scrollStripTo(selKey, smooth);
+  } else if (preserveAnchorKey) {
+    const anchor = strip.querySelector('.bubble[data-day="' + preserveAnchorKey + '"]');
+    strip.scrollLeft = anchor
+      ? prevScrollLeft + (anchor.offsetLeft - preserveAnchorOffset)
+      : prevScrollLeft;
   } else if (selWasVisible) {
     strip.scrollLeft = prevScrollLeft;   // data refresh: don't yank the strip
   } else {
     scrollStripTo(selKey, false);        // first render / range extension
   }
+}
+
+function extendStripRange(direction) {
+  if (!state.stripRange) ensureStripRange();
+  const strip = $('#strip');
+  const anchorKey = direction < 0
+    ? dayKey(state.stripRange.start)
+    : dayKey(state.stripRange.end);
+  const anchor = strip.querySelector('.bubble[data-day="' + anchorKey + '"]');
+  const anchorOffset = anchor ? anchor.offsetLeft : 0;
+
+  if (direction < 0) {
+    state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
+  } else {
+    state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+  }
+  renderStrip({ preserveAnchorKey: anchorKey, preserveAnchorOffset: anchorOffset });
+}
+
+function maybeExtendStripRange() {
+  const strip = $('#strip');
+  if (!state.stripRange || strip.scrollWidth <= strip.clientWidth) return;
+  const threshold = Math.max(72, strip.clientWidth * 0.18);
+  if (strip.scrollLeft < threshold) extendStripRange(-1);
+  else if (strip.scrollLeft + strip.clientWidth > strip.scrollWidth - threshold) extendStripRange(1);
 }
 
 function scrollStripTo(dayKeyVal, smooth) {
@@ -1586,6 +1723,15 @@ function buildEmpty(day) {
   return d;
 }
 
+function buildDayLoading(day) {
+  const empty = el('div', 'empty');
+  empty.innerHTML =
+    '<div class="empty-glyph" aria-hidden="true">' + ICONS.refresh + '</div>' +
+    '<h3>Loading ' + esc(navTitle(day).toLowerCase()) + '…</h3>' +
+    '<p>Preparing this day.</p>';
+  return empty;
+}
+
 function buildAppCredit() {
   const footer = el('footer', 'app-footer');
   footer.setAttribute('aria-label', 'Dispatch');
@@ -1599,18 +1745,22 @@ function renderDay() {
   const day = state.day;
   const key = dayKey(day);
   const view = $('#dayview');
-  const items = state.items
-    .filter((i) => i.day === key && !isFilteredYouTubeItem(i))
-    .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+  const cached = state.dayCache.get(key);
+  const items = cached
+    ? cached.filter((i) => !isFilteredYouTubeItem(i))
+      .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
+    : [];
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
 
   const frag = document.createDocumentFragment();
-  for (const it of items) {
-    const src = srcById.get(it.sourceId);
-    frag.appendChild(buildItemCard(it, src));
-  }
-  if (!items.length) {
-    frag.appendChild(buildEmpty(day));
+  if (cached === undefined) {
+    frag.appendChild(buildDayLoading(day));
+  } else {
+    for (const it of items) {
+      const src = srcById.get(it.sourceId);
+      frag.appendChild(buildItemCard(it, src));
+    }
+    if (!items.length) frag.appendChild(buildEmpty(day));
   }
   frag.appendChild(buildAppCredit());
 
@@ -1623,6 +1773,8 @@ function renderAll(options = {}) {
   renderStrip(options);
   renderDay();
   renderSourcesList();
+  const key = dayKey(state.day);
+  if (state.db && !state.dayCache.has(key)) requestDayWindow(state.day);
 }
 
 /* ---------------- Rendering: sources screen ---------------- */
@@ -1846,6 +1998,16 @@ function setDay(d, options = {}) {
   const next = addDays(d, 0);
   next.setHours(0, 0, 0, 0);
   state.day = next;
+  // Keep one more date ready when navigation reaches either visible edge.
+  // This also lets the desktop strip grow progressively when all current
+  // bubbles fit without requiring a physical scroll gesture.
+  if (state.stripRange) {
+    if (next <= addDays(state.stripRange.start, 1)) {
+      state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
+    } else if (next >= addDays(state.stripRange.end, -1)) {
+      state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+    }
+  }
   // Every intentional focus change recentres the complete carousel. The
   // spotlight settle calls this too, so the selected circle cannot drift.
   renderAll({ center: options.center !== false, smooth: options.smooth !== false });
@@ -2063,9 +2225,16 @@ function initStripSpotlight() {
       if (key && key !== dayKey(state.day)) setDay(fromDayKey(key), { center: true, smooth: false });
     }
   };
+  let extensionFrame = null;
   strip.addEventListener('scroll', () => {
     clearTimeout(timer);
     timer = setTimeout(settle, 140);
+    if (extensionFrame == null) {
+      extensionFrame = requestAnimationFrame(() => {
+        extensionFrame = null;
+        maybeExtendStripRange();
+      });
+    }
   }, { passive: true });
   if ('onscrollend' in strip) {
     strip.addEventListener('scrollend', () => { clearTimeout(timer); settle(); });
@@ -2125,7 +2294,10 @@ async function init() {
   if (!state.sources.length) {
     state.sources = await restoreSourcesFromSnapshot();
   }
-  state.items = await storeGetAll('items');
+  // Do not pull the complete archive into memory at startup. The durable
+  // IndexedDB archive is queried for the seven-day window plus one-day buffer.
+  state.items = [];
+  await requestDayWindow(state.day, false);
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
   persistSourceSnapshot();
 
