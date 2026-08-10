@@ -38,7 +38,8 @@ Everything runs in your browser and everything stays on your device:
   appearance. Swiping beats scrolling: one day, one glance.
 - **Three kinds of sources, fully extracted.**
   - *Text* — Substack and any RSS/Atom feed: cover image (pulled from the
-    post's media or first embedded image), byline, and a pulled summary.
+    post's media, first embedded image, or article Open Graph metadata),
+    byline, and a pulled summary.
     Substack audio posts keep this same editorial card layout, with their
     duration in the metadata and a **Listen** action.
   - *Video* — YouTube channels, with thumbnail, title, channel profile icon
@@ -52,6 +53,9 @@ Everything runs in your browser and everything stays on your device:
 - **Automatic refresh.** Dispatch re-fetches stale sources when you open it,
   when the app returns to the foreground, and periodically while it's open.
   Pull down on any day to refresh immediately.
+- **Explicit provenance.** Actions identify the destination: “Read on
+  Palladium”, “Read on Substack”, “Listen on Substack”, “Watch on YouTube”,
+  or “Listen on Apple Podcasts”.
 - **Installable.** Add it to your iPhone home screen (Share → Add to Home
   Screen) — it runs full-screen with its own icon, and works offline thanks
   to the service worker.
@@ -59,8 +63,9 @@ Everything runs in your browser and everything stays on your device:
 ## How it works
 
 1. **Adding a source.** Paste the publication, channel, show or feed URL — a
-   Substack publication page, a YouTube channel page (`/channel/…`, `/c/…`,
-   `/user/…` or `@handle`), an Apple Podcasts show page, a podcast RSS URL,
+   Substack publication page or profile link (`substack.com/@handle`), a
+   YouTube channel page (`/channel/…`, `/c/…`, `/user/…` or `@handle`), an
+   Apple Podcasts show page, a podcast RSS URL,
    or any RSS/Atom feed. Dispatch adapts the URL to the underlying feed,
    fetches it, classifies it (text / video / podcast), and stores it locally.
    For podcasts it also

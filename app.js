@@ -359,10 +359,25 @@ function attrOf(node, names) {
 
 function firstImage(html) {
   if (!html) return '';
+  const metaImage = metaContent(html, 'og:image') || metaContent(html, 'twitter:image');
+  if (metaImage) return metaImage;
+
   // Prefer a real editorial image over a tracking pixel, avatar, or logo.
   const tags = html.match(/<img\b[^>]*>/gi) || [];
   for (const tag of tags) {
-    const src = (tag.match(/\bsrc=["']([^"']+)["']/i) || [])[1] || '';
+    let src = (tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!src) src = (tag.match(/\bdata-src\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!src) src = (tag.match(/\bdata-lazy-src\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!src) src = (tag.match(/\bdata-original\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!src) {
+      const srcset = (tag.match(/\b(?:srcset|data-srcset)\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+      const candidates = srcset.split(',').map((candidate) => candidate.trim().split(/\s+/)[0]).filter(Boolean);
+      src = candidates[candidates.length - 1] || '';
+    }
+    if (!src) {
+      const attrs = (tag.match(/\bdata-attrs\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+      try { src = JSON.parse(attrs.replace(/&quot;/g, '"')).src || ''; } catch (e) { /* ignore malformed metadata */ }
+    }
     if (!src || /^data:/i.test(src) || /\.svg(?:[?#]|$)/i.test(src)) continue;
     const width = Number((tag.match(/\bwidth=["']?(\d+)/i) || [])[1] || 0);
     const height = Number((tag.match(/\bheight=["']?(\d+)/i) || [])[1] || 0);
@@ -370,8 +385,7 @@ function firstImage(html) {
     if (/avatar|author|logo|icon/i.test(tag) && width && width < 500) continue;
     return src;
   }
-  const m2 = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-  return m2 ? m2[1] : '';
+  return '';
 }
 
 function parseDate(str) {
@@ -539,6 +553,14 @@ function youtubeUserFromUrl(u) {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+function substackHandleFromProfileUrl(u) {
+  if (!u || u.hostname.replace(/^www\./, '').toLowerCase() !== 'substack.com') return null;
+  const m = u.pathname.match(/^\/@([^/]+)\/?$/i);
+  if (!m) return null;
+  const handle = decodeURIComponent(m[1]);
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(handle) ? handle : null;
+}
+
 async function youtubeChannelIdFromPage(handleUrl) {
   const { text } = await fetchText(handleUrl);
   const m = text.match(/"channelId":"(UC[\w-]{22})"/) ||
@@ -571,6 +593,66 @@ function metaContent(html, name) {
     if (content) return decodeRemoteUrl(content);
   }
   return '';
+}
+
+function absoluteUrl(value, base) {
+  if (!value) return '';
+  try { return new URL(value, base).href; } catch (e) { return value; }
+}
+
+async function articleImageFromPage(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return '';
+  try {
+    const { text } = await fetchText(url);
+    const image = metaContent(text, 'og:image') || metaContent(text, 'twitter:image') || firstImage(text);
+    return absoluteUrl(image, url);
+  } catch (e) {
+    return '';
+  }
+}
+
+async function enrichMissingArticleImages(sourceId, parsedItems) {
+  const candidates = parsedItems
+    .filter((item) => !item.imageUrl && item.link)
+    .slice(0, 40);
+  if (!candidates.length) return;
+
+  let cursor = 0;
+  async function worker() {
+    while (cursor < candidates.length) {
+      const item = candidates[cursor++];
+      item.imageUrl = await articleImageFromPage(item.link);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
+
+  const source = state.sources.find((candidate) => candidate.id === sourceId);
+  if (!source || source.type !== 'article') return;
+  const byGuid = new Map(candidates.filter((item) => item.imageUrl).map((item) => [item.guid, item.imageUrl]));
+  const updates = state.items
+    .filter((item) => item.sourceId === sourceId && byGuid.has(item.guid) && item.imageUrl !== byGuid.get(item.guid))
+    .map((item) => Object.assign({}, item, { imageUrl: byGuid.get(item.guid) }));
+  if (!updates.length) return;
+
+  try {
+    await storeBulkPut('items', updates);
+    state.items = await storeGetAll('items');
+    renderAll();
+  } catch (e) { /* keep the feed usable even if image enrichment cannot persist */ }
+}
+
+async function upgradeMissingArticleImages() {
+  const now = Date.now();
+  const articleSources = state.sources.filter((source) => {
+    if (source.type !== 'article' || !source.lastFetchedAt) return false;
+    return now - new Date(source.lastFetchedAt).getTime() <= STALE_OPEN_MS;
+  });
+  await Promise.all(articleSources.map(async (source) => {
+    const missing = state.items
+      .filter((item) => item.sourceId === source.id && !item.imageUrl && item.link)
+      .map((item) => ({ guid: item.guid, link: item.link, imageUrl: '' }));
+    if (missing.length) await enrichMissingArticleImages(source.id, missing);
+  }));
 }
 
 function youtubeChannelAvatarFromHtml(html) {
@@ -712,6 +794,22 @@ async function resolveFeedUrl(raw, options = {}) {
   const host = u.hostname.replace(/^www\./, '').toLowerCase();
   const youtubeHost = isYouTubeHost(host);
   const substackHost = isSubstackHostname(host);
+  const substackProfileHandle = substackHandleFromProfileUrl(u);
+
+  // Substack profile links such as substack.com/@palladium point to the
+  // account's publication, whose feed lives at the corresponding subdomain.
+  // Keep the profile URL as the user-supplied source URL, but follow the
+  // publication feed so the app receives the actual posts.
+  if (substackProfileHandle) {
+    return {
+      kind: 'source',
+      type: 'article',
+      platform: 'substack',
+      url,
+      siteUrl: 'https://' + substackProfileHandle + '.substack.com',
+      feedUrl: 'https://' + substackProfileHandle + '.substack.com/feed',
+    };
+  }
 
   // Substack's publication feed is stable at /feed. Do not download the
   // heavy publication page first; persist the source immediately and let the
@@ -919,7 +1017,7 @@ async function addSource(rawUrl) {
     title: resolved.title || hostOf(resolved.url),
     type: initialType,
     platform: resolved.platform || initialType,
-    siteUrl: resolved.url,
+    siteUrl: resolved.siteUrl || resolved.url,
     iconUrl: 'https://' + hostOf(feedUrl) + '/favicon.ico',
     channelId: resolved.channelId || null,
     channelUrl: resolved.channelUrl || null,
@@ -1074,6 +1172,7 @@ async function fetchSource(sourceId, preParsed, preText) {
     source.lastError = null;
     await storePut('sources', source);
     persistSourceSnapshot();
+    if (source.type === 'article') void enrichMissingArticleImages(source.id, parsed.items);
     if (channelIconPromise) {
       void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
     }
@@ -1210,13 +1309,23 @@ function cardTarget(item, source) {
   return item.link || item.audioUrl || (source ? source.siteUrl : '#');
 }
 
+function sourceProvenance(source) {
+  if (!source) return '';
+  const title = String(source.title || '').trim();
+  if (title && !/^(?:text feed|rss|article|podcast)$/i.test(title)) return title;
+  return hostOf(source.siteUrl || source.url || source.feedUrl);
+}
+
 function pillLabel(item, source) {
   if (item.kind === 'youtube') return 'Watch on YouTube';
   if (isAudioItem(item)) {
-    if (isSubstackSource(source)) return 'Listen';
-    return source && source.itunesId ? 'Listen in Podcasts' : 'Listen';
+    if (isSubstackSource(source)) return 'Listen on Substack';
+    if (source && source.itunesUrl) return 'Listen on Apple Podcasts';
+    const destination = sourceProvenance(source);
+    return destination ? 'Listen on ' + destination : 'Listen';
   }
-  return source && /substack/i.test(source.title) ? 'Read on Substack' : 'Read';
+  const destination = isSubstackSource(source) ? 'Substack' : sourceProvenance(source);
+  return destination ? 'Read on ' + destination : 'Read';
 }
 
 function buildItemCard(item, source) {
@@ -1835,6 +1944,7 @@ async function init() {
 
   renderAll();
   void upgradeYouTubeSourceIcons();
+  void upgradeMissingArticleImages();
   maybeAutoRefresh();
 
   // keyboard: day navigation, ESC to close overlays
