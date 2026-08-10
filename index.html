@@ -78,6 +78,11 @@
       window.addEventListener('load', function () {
         var hadController = !!navigator.serviceWorker.controller;
         var reloading = false;
+        var registration = null;
+
+        function checkForUpdate() {
+          if (registration) registration.update().catch(function () {});
+        }
 
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           // The first install needs no reload. On later updates, reload once
@@ -88,10 +93,13 @@
         });
 
         navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-          .then(function (registration) {
+          .then(function (nextRegistration) {
+            registration = nextRegistration;
             return registration.update();
           })
           .catch(function () {});
+
+        window.addEventListener('focus', checkForUpdate);
       });
     }
   </script>
