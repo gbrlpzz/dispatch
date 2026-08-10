@@ -110,6 +110,17 @@ The app is plain HTML/CSS/JS — edit and reload. The monochrome home-screen
 icons are generated with `scripts/make_icons.py` (Pillow, macOS SF-style
 font); re-run it after touching the icon motif.
 
+## Preview contract
+
+The shipped `icons/icon-512.png` is the source of truth for the product mark.
+The repeatable Open Graph preview is maintained in
+[`gbrlpzz/preview`](https://github.com/gbrlpzz/preview): it uses that exact
+home-screen asset and real mobile captures, with the icon and screenshots
+top-aligned. The Dispatch lockup uses the same bold system type treatment as
+the mobile footer and the lowercase credit `by gbrlpzz`. Never recreate the
+mark with a font or generated artwork; update the preview provenance whenever
+the shipped icon changes.
+
 ## Deploy
 
 Any static host works. Vercel (this repo's setup):
