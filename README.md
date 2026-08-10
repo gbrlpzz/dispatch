@@ -3,7 +3,7 @@
 ![Dispatch preview](preview.png)
 
 The Open Graph card is generated from real mobile captures by the reusable
-[GBRLPZ preview generator](https://github.com/gbrlpzz/preview). The committed
+the internal preview generator. The committed
 `preview.png` is the stable raster distribution asset; `preview.svg` remains
 beside it as the canonical inspectable source.
 
@@ -117,7 +117,7 @@ font); re-run it after touching the icon motif.
 
 The shipped `icons/icon-512.png` is the source of truth for the product mark.
 The repeatable Open Graph preview is maintained in
-[`gbrlpzz/preview`](https://github.com/gbrlpzz/preview): it uses that exact
+the internal preview generator: it uses that exact
 home-screen asset and the two exact real mobile captures, exporting both the
 canonical `preview.svg` and the stable `preview.png` derivative. The deterministic
 card contract is `1200 × 630`, with an 80px outer rhythm, 320 × 650
