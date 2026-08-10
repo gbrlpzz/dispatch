@@ -1,69 +1,64 @@
 #!/usr/bin/env python3
 """Generate Dispatch's minimal black-on-white home-screen icon.
 
-The mark is one real SF Pro Display Black lowercase ``d``. There is no
-illustration, date, gradient, or decorative frame: just the app's initial in
-the same restrained spirit as modern fintech icons. The glyph is optically
-centred (its ink mass is shifted slightly left/up from its mathematical
-bounding box) and rendered at high resolution before downsampling.
+The mark is a single hand-authored rounded squiggle. It is rendered from the
+same cubic path as ``preview/assets/dispatch-mark.svg`` so the app icon and
+the public preview stay visually identical.
 """
 from __future__ import annotations
 
 import os
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "icons"))
-FONT_CANDIDATES = [
-    "/System/Library/Fonts/SFNS.ttf",
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/System/Library/Fonts/HelveticaNeue.ttc",
-]
-BLACK = (0, 0, 0, 255)
-WHITE = (255, 255, 255, 255)
-
-
-def load_font(size: int):
-    for path in FONT_CANDIDATES:
-        try:
-            font = ImageFont.truetype(path, size)
-            # SFNS is variable: width, optical size, grade, weight.
-            if path.endswith("SFNS.ttf"):
-                try:
-                    font.set_variation_by_axes([100, 96, 500, 900])
-                except Exception:
-                    pass
-            return font
-        except Exception:
-            continue
-    return ImageFont.load_default()
-
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
 
 def draw_icon(size: int) -> Image.Image:
-    image = Image.new("RGBA", (size, size), WHITE)
+    # Render on an opaque white field before downsampling. Keeping the
+    # anti-aliased edge on the same field avoids halos in the PNG icons.
+    image = Image.new("RGB", (size, size), WHITE)
     draw = ImageDraw.Draw(image)
-    font_size = round(size * 0.86)
-    font = load_font(font_size)
-    glyph = "d"
-    bbox = draw.textbbox((0, 0), glyph, font=font)
-    ink_w = bbox[2] - bbox[0]
-    ink_h = bbox[3] - bbox[1]
+    radius = round(size * 224 / 1024)
+    draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=WHITE)
 
-    # Centre the actual glyph bounds, then apply a measured optical correction:
-    # the lowercase d's stem makes its black mass read slightly right/heavy.
-    x = (size - ink_w) / 2 - bbox[0] - size * 0.024
-    y = (size - ink_h) / 2 - bbox[1] - size * 0.030
-    draw.text((round(x), round(y)), glyph, font=font, fill=BLACK)
-    return image
+    def cubic(p0, p1, p2, p3, steps=32):
+        points = []
+        for i in range(steps + 1):
+            t = i / steps
+            u = 1 - t
+            points.append((
+                size * (u**3 * p0[0] + 3 * u**2 * t * p1[0] + 3 * u * t**2 * p2[0] + t**3 * p3[0]) / 1024,
+                size * (u**3 * p0[1] + 3 * u**2 * t * p1[1] + 3 * u * t**2 * p2[1] + t**3 * p3[1]) / 1024,
+            ))
+        return points
+
+    points = []
+    segments = [
+        ((170, 646), (245, 478), (329, 388), (427, 388)),
+        ((427, 388), (523, 388), (543, 493), (582, 582)),
+        ((582, 582), (618, 663), (669, 742), (747, 742)),
+        ((747, 742), (827, 742), (884, 663), (932, 490)),
+    ]
+    for index, segment in enumerate(segments):
+        # A modest number of integer samples keeps Pillow's thick-line raster
+        # path stable at small icon sizes; excessive samples create seams.
+        points.extend(cubic(*segment, steps=32 if index == 0 else 24)[index != 0:])
+    stroke = max(1, round(size * 92 / 1024))
+    draw.line(points, fill=BLACK, width=stroke, joint="curve")
+    cap = stroke // 2
+    for x, y in (points[0], points[-1]):
+        draw.ellipse((round(x - cap), round(y - cap), round(x + cap), round(y + cap)), fill=BLACK)
+    return image.convert("RGBA")
 
 
 def write_svg(path: str) -> None:
-    # SF Pro is present on Apple devices; the fallbacks keep the favicon
-    # legible elsewhere. The PNGs remain the authoritative Home Screen mark.
+    # The PNGs remain the authoritative Home Screen mark. Keep this SVG path
+    # identical to the preview generator's canonical vector asset.
     svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" fill="#fff"/>
-  <text x="488" y="482" text-anchor="middle" dominant-baseline="middle"
-        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif"
-        font-size="880" font-weight="900" fill="#000">d</text>
+  <rect width="1024" height="1024" rx="224" fill="#fff"/>
+  <path d="M170 646C245 478 329 388 427 388c96 0 116 105 155 194 36 81 87 160 165 160 80 0 137-79 185-252"
+        fill="none" stroke="#000" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
 """
     with open(path, "w", encoding="utf-8") as f:
