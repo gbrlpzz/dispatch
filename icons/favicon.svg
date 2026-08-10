@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" rx="224" fill="#fff"/>
-  <path d="M170 646C245 478 329 388 427 388c96 0 116 105 155 194 36 81 87 160 165 160 80 0 137-79 185-252"
-        fill="none" stroke="#000" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="1024" height="1024" fill="#fff"/>
+  <text x="488" y="482" text-anchor="middle" dominant-baseline="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif"
+        font-size="880" font-weight="900" fill="#000">d</text>
 </svg>
