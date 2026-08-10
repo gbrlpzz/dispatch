@@ -546,6 +546,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
 
 .screen-nav {
   flex: none;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -556,7 +557,23 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 0.5px solid var(--separator);
 }
-.screen-nav h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.25px; }
+.screen-nav h2 {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 160px);
+  margin: 0;
+  padding: 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.25px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
 
 #sources-list {
   flex: 1;
