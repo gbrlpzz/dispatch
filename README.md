@@ -2,6 +2,9 @@
 
 ![Dispatch preview](preview.svg)
 
+The Open Graph card is generated from real mobile captures by the reusable
+[GBRLPZ preview generator](https://github.com/gbrlpzz/preview).
+
 **A minimal, private, distraction-free personal feed, arranged by day.**
 
 Dispatch is a small, focused tool in the spirit of *minimal, effective,
@@ -67,8 +70,8 @@ Everything runs in your browser and everything stays on your device:
 
 1. **Adding a source.** Paste the publication, channel, show or feed URL — a
    Substack publication page or profile link (`substack.com/@handle`), a
-   YouTube channel page (`/channel/…`, `/c/…`, `/user/…` or `@handle`), an
-   Apple Podcasts show page, a podcast RSS URL,
+   YouTube channel page (`/channel/…`, `/c/…`, `/user/…` or `@handle`),
+   an Apple Podcasts show page, a podcast RSS URL,
    or any RSS/Atom feed. Dispatch adapts the URL to the underlying feed,
    fetches it, classifies it (text / video / podcast), and stores it locally.
    For podcasts it also
