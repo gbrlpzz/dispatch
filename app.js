@@ -1507,7 +1507,7 @@ async function removeSource(id) {
 
 /* ---------------- Rendering: strip ---------------- */
 
-const STRIP_BACK = 6, STRIP_FWD = 2, STRIP_EXTEND = 1;
+const STRIP_BACK = 6, STRIP_FWD = 6, STRIP_EXTEND = 1;
 
 function ensureStripRange() {
   const today = todayMidnight();
