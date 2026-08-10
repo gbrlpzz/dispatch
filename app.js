@@ -1998,6 +1998,16 @@ function setDay(d, options = {}) {
   const next = addDays(d, 0);
   next.setHours(0, 0, 0, 0);
   state.day = next;
+  // Keep one more date ready when navigation reaches either visible edge.
+  // This also lets the desktop strip grow progressively when all current
+  // bubbles fit without requiring a physical scroll gesture.
+  if (state.stripRange) {
+    if (next <= addDays(state.stripRange.start, 1)) {
+      state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
+    } else if (next >= addDays(state.stripRange.end, -1)) {
+      state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+    }
+  }
   // Every intentional focus change recentres the complete carousel. The
   // spotlight settle calls this too, so the selected circle cannot drift.
   renderAll({ center: options.center !== false, smooth: options.smooth !== false });
