@@ -81,9 +81,10 @@ Everything runs in your browser and everything stays on your device:
 2. **Fetching.** Feeds are parsed in the browser (RSS 2.0, Atom, and the
    YouTube Videos playlist feed). Each item is bucketed into the *device-local*
    day its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
-3. **The calendar.** The strip covers roughly 4 months back and 2 weeks
-   forward from today, extending as you scroll. Each bubble shows a live
-   day/month date; the day view shows that day's feed items newest-first.
+3. **The calendar.** The home strip starts with six days back and the
+   next two days forward, so the immediate calendar is visible without loading
+   feed content for future days. It extends as you scroll. Each bubble shows a
+   live day/month date; the day view shows that day's feed items newest-first.
 4. **Refresh scheduling.** There is no background daemon — iOS doesn't allow
    web apps to fetch in the background. Instead Dispatch refreshes whenever
    you open it or bring it to the foreground if any source is older than 12
@@ -125,7 +126,21 @@ continuous corners, 5px dark bezels, and black Dynamic Island presentation
 layers. The Dispatch lockup uses weight 800 for `dispatch`, weight 700 for
 the lowercase credit `by gbrlpzz`, and the same 80px top/left rhythm. Never
 recreate the mark with a font or generated artwork; update the preview
-provenance whenever the shipped icon changes.
+provenance whenever the shipped icon changes. `preview.png` is the stable
+raster asset used by this README, the personal site's project card, and the
+Open Graph/Twitter metadata in `index.html`; `preview.svg` remains beside it
+as the canonical inspectable source.
+
+## Branding
+
+- Write the product name as lowercase `dispatch` in the visual lockup.
+- Keep the shipped lowercase `d` icon (`icons/icon-512.png`) as the sole mark;
+  do not recreate it with a font or substitute generated artwork.
+- Use `by gbrlpzz` as the compact credit, with the same bold system treatment
+  documented in the preview provenance.
+- Keep the product palette monochrome and let the real interface captures carry
+  their own content; preview framing, margins, bezels, and notches are shared
+  system decisions.
 
 ## Deploy
 
