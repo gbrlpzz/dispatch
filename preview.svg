@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8f8fa"/>
+      <stop offset="1" stop-color="#e5e5e8"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f7f7f8"/>
+    </linearGradient>
+    <linearGradient id="thumb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#252529"/>
+      <stop offset="1" stop-color="#8b8b91"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#3b3b41" flood-opacity=".16"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-30%" width="140%" height="160%">
+      <feGaussianBlur stdDeviation="48"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#field)"/>
+  <ellipse cx="122" cy="-28" rx="310" ry="230" fill="#ffffff" opacity=".78" filter="url(#soft)"/>
+  <ellipse cx="1110" cy="666" rx="370" ry="245" fill="#d7d7dc" opacity=".62" filter="url(#soft)"/>
+
+  <!-- Identity block: a product mark, not a device frame. -->
+  <g fill="#111114">
+    <text x="78" y="82" font-family="Menlo, Consolas, monospace" font-size="13" font-weight="700" letter-spacing="2.4">PERSONAL SOFTWARE</text>
+    <text x="74" y="206" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif" font-size="86" font-weight="900" letter-spacing="-6">dispatch</text>
+    <text x="80" y="252" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" font-size="22" font-weight="500" letter-spacing="-.4">your feeds, arranged by day</text>
+    <text x="80" y="294" font-family="Menlo, Consolas, monospace" font-size="13" letter-spacing=".2" fill="#68686f">PRIVATE  ·  LOCAL-FIRST  ·  IPHONE-READY</text>
+  </g>
+
+  <rect x="80" y="378" width="82" height="82" rx="22" fill="#111114"/>
+  <text x="121" y="423" text-anchor="middle" dominant-baseline="middle" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, Arial, sans-serif" font-size="70" font-weight="900" letter-spacing="-6" fill="#ffffff">d</text>
+  <text x="184" y="411" font-family="Menlo, Consolas, monospace" font-size="12" font-weight="700" letter-spacing="1.7" fill="#68686f">ONE SCREEN</text>
+  <text x="184" y="438" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" font-size="18" font-weight="500" fill="#242428">no algorithm, no account</text>
+
+  <!-- A cropped product surface: enough interface to understand Dispatch,
+       deliberately not a literal full-device mockup. -->
+  <g filter="url(#shadow)">
+    <rect x="510" y="42" width="620" height="548" rx="32" fill="url(#panel)" stroke="#ffffff" stroke-width="3"/>
+    <rect x="511.5" y="43.5" width="617" height="545" rx="30.5" fill="none" stroke="#d9d9dd" stroke-width="1"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" fill="#17171a">
+    <text x="546" y="86" font-size="17" font-weight="700" letter-spacing="-.4">dispatch</text>
+    <text x="820" y="86" text-anchor="middle" font-size="16" font-weight="600">Today</text>
+    <circle cx="1080" cy="80" r="3" fill="#8a8a90"/>
+    <circle cx="1093" cy="80" r="3" fill="#8a8a90"/>
+    <circle cx="1106" cy="80" r="3" fill="#8a8a90"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <circle cx="586" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="586" y="145" font-size="15" font-weight="600" fill="#77777d">07</text>
+    <circle cx="660" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="660" y="145" font-size="15" font-weight="600" fill="#77777d">08</text>
+    <circle cx="734" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="734" y="145" font-size="15" font-weight="600" fill="#77777d">09</text>
+    <circle cx="808" cy="140" r="29" fill="#111114"/>
+    <text x="808" y="145" font-size="15" font-weight="700" fill="#ffffff">10</text>
+    <circle cx="882" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="882" y="145" font-size="15" font-weight="600" fill="#77777d">11</text>
+    <circle cx="956" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="956" y="145" font-size="15" font-weight="600" fill="#77777d">12</text>
+    <circle cx="1030" cy="140" r="28" fill="#f1f1f3"/>
+    <text x="1030" y="145" font-size="15" font-weight="600" fill="#77777d">13</text>
+  </g>
+
+  <g>
+    <rect x="546" y="190" width="548" height="156" rx="18" fill="#ffffff" stroke="#e6e6e9"/>
+    <rect x="560" y="204" width="150" height="128" rx="12" fill="url(#thumb)"/>
+    <path d="M560 286 C594 249 624 306 657 260 C676 234 694 247 710 225 L710 332 L560 332Z" fill="#b8b8bd" opacity=".46"/>
+    <circle cx="676" cy="231" r="15" fill="#eeeeef" opacity=".72"/>
+    <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" fill="#17171a">
+      <text x="732" y="220" font-size="11" font-weight="700" letter-spacing="1.5" fill="#77777d">LIMINALFUTURES</text>
+      <text x="732" y="253" font-size="18" font-weight="700">What comes after</text>
+      <text x="732" y="277" font-size="18" font-weight="700">the toolkit?</text>
+      <text x="732" y="308" font-family="Menlo, Consolas, monospace" font-size="11" fill="#77777d">10 AUG  ·  08:42</text>
+      <rect x="732" y="318" width="148" height="4" rx="2" fill="#e1e1e4"/>
+      <rect x="886" y="318" width="74" height="4" rx="2" fill="#e1e1e4"/>
+    </g>
+  </g>
+
+  <g>
+    <rect x="546" y="364" width="548" height="156" rx="18" fill="#ffffff" stroke="#e6e6e9"/>
+    <rect x="560" y="378" width="150" height="128" rx="12" fill="#111114"/>
+    <circle cx="635" cy="432" r="26" fill="#ffffff" opacity=".14"/>
+    <path d="M628 418 L658 432 L628 447Z" fill="#ffffff"/>
+    <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, Arial, sans-serif" fill="#17171a">
+      <text x="732" y="394" font-size="11" font-weight="700" letter-spacing="1.5" fill="#77777d">YOUTUBE</text>
+      <text x="732" y="427" font-size="18" font-weight="700">A longer way</text>
+      <text x="732" y="451" font-size="18" font-weight="700">of seeing things</text>
+      <text x="732" y="481" font-family="Menlo, Consolas, monospace" font-size="11" fill="#77777d">10 AUG  ·  42:18</text>
+      <rect x="732" y="492" width="148" height="4" rx="2" fill="#e1e1e4"/>
+      <rect x="886" y="492" width="74" height="4" rx="2" fill="#e1e1e4"/>
+    </g>
+  </g>
+</svg>
