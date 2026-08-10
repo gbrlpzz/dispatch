@@ -54,6 +54,19 @@ function isYouTubeHost(host) {
   return h === 'youtube.com' || h.endsWith('.youtube.com') || h === 'youtu.be';
 }
 
+function isYouTubeShortUrl(value) {
+  try {
+    const u = new URL(String(value || ''));
+    return isYouTubeHost(u.hostname) && /\/shorts(?:\/|$)/i.test(u.pathname);
+  } catch (e) {
+    return /(?:youtube\.com|youtu\.be)\/shorts(?:\/|$)/i.test(String(value || ''));
+  }
+}
+
+function hasYouTubeShortMarker(value) {
+  return /(?:^|[\s([{-])#shorts?(?=$|[\s)\]}.,!?])/i.test(String(value || ''));
+}
+
 /* ---------------- Dates (device-local days) ---------------- */
 
 const DAY_MS = 86400000;
@@ -242,6 +255,14 @@ async function deleteItemsForSource(sourceId) {
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
 }
 
+async function deleteItemsByIds(ids) {
+  if (!ids.length) return;
+  const tx = state.db.transaction('items', 'readwrite');
+  const os = tx.objectStore('items');
+  for (const id of ids) os.delete(id);
+  await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+}
+
 /* ---------------- Feed fetching (local, in-browser) ---------------- */
 
 const PROXIES = [
@@ -405,14 +426,21 @@ function parseDuration(str) {
   return parts[0] || null;
 }
 
-function parseFeed(text, feedUrl) {
+function parseFeed(text, feedUrl, options = {}) {
   const doc = new DOMParser().parseFromString(text, 'text/xml');
   if (doc.querySelector('parsererror')) throw new Error('Could not parse this feed.');
   const root = doc.documentElement;
   const rootName = String(root.tagName || '').toLowerCase();
 
   let feedTitle = '', feedLink = '', feedIcon = '', feedGenerator = '';
+  let feedAuthor = '', feedAuthorUrl = '', feedChannelId = '';
   const items = [];
+  const pushItem = (item) => {
+    if (!item) return;
+    const youtubeLike = item.kind === 'youtube' || isYouTubeHost(hostOf(item.link));
+    if (!options.includeYouTubeShorts && youtubeLike && item.youtubeShort) return;
+    items.push(item);
+  };
 
   if (rootName === 'rss' || rootName === 'rdf') {
     const channel = localChildren(root, 'channel')[0] || root;
@@ -423,18 +451,22 @@ function parseFeed(text, feedUrl) {
     if (img) feedIcon = childUrl(img, ['url']);
     feedIcon = feedIcon || childUrl(channel, ['image', 'icon', 'logo', 'thumbnail']);
     const entries = localChildren(channel, 'item');
-    for (const it of entries) items.push(parseRssItem(it));
+    for (const it of entries) pushItem(parseRssItem(it));
   } else if (rootName === 'feed') {
     feedTitle = childText(root, ['title']) || hostOf(feedUrl);
     feedLink = childAttr(root, ['link'], 'href') || feedUrl;
     feedGenerator = childText(root, ['generator']);
     feedIcon = childUrl(root, ['icon', 'logo', 'image']);
+    const author = localChildren(root, 'author')[0];
+    feedAuthor = childText(author, ['name']);
+    feedAuthorUrl = childUrl(author, ['uri', 'link']);
+    feedChannelId = childText(root, ['channelId']);
     const entries = localChildren(root, 'entry');
-    for (const it of entries) items.push(parseAtomItem(it));
+    for (const it of entries) pushItem(parseAtomItem(it));
   } else {
     throw new Error('Unrecognized feed format.');
   }
-  return { feedTitle, feedLink, feedIcon, feedGenerator, items };
+  return { feedTitle, feedLink, feedIcon, feedGenerator, feedAuthor, feedAuthorUrl, feedChannelId, items };
 }
 
 function parseRssItem(it) {
@@ -446,6 +478,7 @@ function parseRssItem(it) {
   const descHtml = childText(it, ['description']);
   const contentHtml = childText(it, ['encoded', 'content']);
   const summary = truncate(stripHtml(descHtml || contentHtml), 340);
+  const youtubeShort = isYouTubeShortUrl(link) || hasYouTubeShortMarker(title + ' ' + descHtml + ' ' + contentHtml);
 
   const enclosure = localChildren(it, 'enclosure')[0];
   const encUrl = enclosure ? enclosure.getAttribute('url') || '' : '';
@@ -480,6 +513,7 @@ function parseRssItem(it) {
     duration,
     publishedAt: pub ? pub.toISOString() : null,
     kind,
+    youtubeShort,
     raw: { videoId: childText(it, ['videoId']) || '' },
   };
 }
@@ -506,7 +540,8 @@ function parseAtomItem(en) {
 
   const videoId = childText(en, ['videoId']) ||
     (String(guid || '').match(/^yt:video:(.+)$/) || [])[1] || '';
-  const isYouTube = !!(videoId || (link && /youtube\.com\/watch/.test(link)));
+  const isYouTube = !!(videoId || (link && /youtube\.com\/(?:watch|shorts)/i.test(link)));
+  const youtubeShort = isYouTubeShortUrl(link) || hasYouTubeShortMarker(title + ' ' + contentHtml);
 
   const kind = isAudio ? 'podcast' : (isYouTube ? 'youtube' : 'article');
   const image = isYouTube
@@ -524,6 +559,7 @@ function parseAtomItem(en) {
     duration: mediaDur || null,
     publishedAt: pub ? pub.toISOString() : null,
     kind,
+    youtubeShort,
     raw: { videoId },
   };
 }
@@ -572,6 +608,65 @@ async function youtubeChannelIdFromPage(handleUrl) {
 function youtubeChannelIdFromFeedUrl(feedUrl) {
   const m = String(feedUrl || '').match(/[?&]channel_id=(UC[\w-]{22})/i);
   return m ? m[1] : null;
+}
+
+function normalizeYouTubeChannelId(value) {
+  const m = String(value || '').match(/(UC[\w-]{22})/i);
+  return m ? m[1] : null;
+}
+
+function youtubePlaylistId(channelId, prefix) {
+  const id = normalizeYouTubeChannelId(channelId);
+  return id ? prefix + id.slice(2) : '';
+}
+
+function youtubeVideosFeedUrl(channelId) {
+  const playlistId = youtubePlaylistId(channelId, 'UULF');
+  return playlistId ? 'https://www.youtube.com/feeds/videos.xml?playlist_id=' + playlistId : '';
+}
+
+function youtubeShortsFeedUrl(channelId) {
+  const playlistId = youtubePlaylistId(channelId, 'UUSH');
+  return playlistId ? 'https://www.youtube.com/feeds/videos.xml?playlist_id=' + playlistId : '';
+}
+
+function isYouTubeVideosFeedUrl(feedUrl) {
+  return /[?&]playlist_id=UULF[\w-]+/i.test(String(feedUrl || ''));
+}
+
+function isYouTubeSource(source) {
+  return !!source && (String(source.platform || '').toLowerCase() === 'youtube' || source.type === 'youtube');
+}
+
+function youtubeChannelIdFromSource(source, parsed) {
+  const fromUrl = (value) => {
+    try { return youtubeChannelIdFromUrl(new URL(value)); } catch (e) { return null; }
+  };
+  const candidates = [
+    source && source.channelId,
+    parsed && parsed.feedChannelId,
+    source && youtubeChannelIdFromFeedUrl(source.feedUrl),
+    source && fromUrl(source.channelUrl),
+    source && fromUrl(source.url),
+  ];
+  for (const candidate of candidates) {
+    const id = normalizeYouTubeChannelId(candidate);
+    if (id) return id;
+  }
+  return null;
+}
+
+function canonicalizeYouTubeSource(source, parsed) {
+  if (!isYouTubeSource(source)) return false;
+  const channelId = youtubeChannelIdFromSource(source, parsed);
+  const feedUrl = youtubeVideosFeedUrl(channelId);
+  if (!channelId || !feedUrl) return false;
+
+  let changed = false;
+  if (source.channelId !== channelId) { source.channelId = channelId; changed = true; }
+  if (!source.channelUrl) { source.channelUrl = 'https://www.youtube.com/channel/' + channelId; changed = true; }
+  if (source.feedUrl !== feedUrl) { source.feedUrl = feedUrl; changed = true; }
+  return changed;
 }
 
 function decodeRemoteUrl(value) {
@@ -822,13 +917,16 @@ async function resolveFeedUrl(raw, options = {}) {
   if (youtubeHost) {
     const user = youtubeUserFromUrl(u);
     if (user) {
-      // YouTube still supports its lightweight legacy user RSS endpoint for
-      // many app-shared handles. Try it first; hydration falls back to page
-      // channel-id extraction when a handle is not mapped there.
+      // Resolve handles to the channel's Videos playlist so Shorts never enter
+      // the feed. Keep the legacy user feed as a compatibility fallback when
+      // YouTube does not expose the channel page to the browser proxy.
+      let channelId = null;
+      try { channelId = await youtubeChannelIdFromPage(url); } catch (e) { /* use the legacy feed fallback */ }
       return {
         kind: 'source', type: 'youtube', platform: 'youtube', url,
+        channelId,
         channelUrl: url,
-        feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user),
+        feedUrl: youtubeVideosFeedUrl(channelId) || 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user),
       };
     }
     const isSingleVideo = host === 'youtu.be' || /\/watch\b/.test(u.pathname) || /\/shorts\//.test(u.pathname);
@@ -849,7 +947,7 @@ async function resolveFeedUrl(raw, options = {}) {
           if (channelId) return {
             kind: 'source', type: 'youtube', platform: 'youtube', url,
             channelId, channelUrl: authorPage.href,
-            feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+            feedUrl: youtubeVideosFeedUrl(channelId),
           };
           const authorUser = youtubeUserFromUrl(authorPage);
           if (authorUser) return {
@@ -865,7 +963,7 @@ async function resolveFeedUrl(raw, options = {}) {
         return {
           kind: 'source', type: 'youtube', platform: 'youtube', url,
           channelId, channelUrl: url,
-          feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+          feedUrl: youtubeVideosFeedUrl(channelId),
         };
       }
       if (isSingleVideo) {
@@ -881,7 +979,7 @@ async function resolveFeedUrl(raw, options = {}) {
       url,
       channelId,
       channelUrl: url,
-      feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+      feedUrl: youtubeVideosFeedUrl(channelId),
     };
   }
 
@@ -990,8 +1088,16 @@ function updateSourceMetadata(source, parsed, feedText) {
     source.type = 'article';
   }
 
-  source.title = parsed.feedTitle || source.title;
-  source.siteUrl = parsed.feedLink || source.siteUrl;
+  if (source.platform === 'youtube') {
+    if (parsed.feedChannelId) source.channelId = normalizeYouTubeChannelId(parsed.feedChannelId) || source.channelId;
+    source.channelUrl = source.channelUrl || parsed.feedAuthorUrl || parsed.feedLink || source.url;
+    const genericTitle = /^(?:videos|short videos|live streams|uploads(?: from .*)?)$/i;
+    source.title = parsed.feedAuthor || (!genericTitle.test(String(parsed.feedTitle || '')) ? parsed.feedTitle : source.title) || source.title;
+    source.siteUrl = source.channelUrl || parsed.feedLink || source.siteUrl;
+  } else {
+    source.title = parsed.feedTitle || source.title;
+    source.siteUrl = parsed.feedLink || source.siteUrl;
+  }
   source.iconUrl = source.channelIconUrl || parsed.feedIcon || source.iconUrl || ('https://' + hostOf(source.feedUrl) + '/favicon.ico');
 }
 
@@ -1027,6 +1133,7 @@ async function addSource(rawUrl) {
     addedAt: new Date().toISOString(),
     lastFetchedAt: null,
     lastError: null,
+    youtubeShortsCheckedAt: null,
   };
   const id = await storePut('sources', source);
   source.id = id;
@@ -1052,7 +1159,7 @@ async function hydrateSource(source, resolved) {
         if (!channelId) throw firstError;
         source.channelId = channelId;
         source.channelUrl = source.channelUrl || source.url;
-        source.feedUrl = 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId;
+        source.feedUrl = youtubeVideosFeedUrl(channelId);
         text = await fetchFeed(source.feedUrl);
       } else if (resolved.optimistic) {
         // Publication pages get an immediate /feed candidate. If that was a
@@ -1066,7 +1173,16 @@ async function hydrateSource(source, resolved) {
         throw firstError;
       }
     }
-    const parsed = parseFeed(text, source.feedUrl);
+    let parsed = parseFeed(text, source.feedUrl);
+    // Existing installs may still point at the all-uploads channel feed. Once
+    // its channel id is known, switch to YouTube's Videos playlist before
+    // storing any items so Shorts cannot be added to the local archive.
+    if (canonicalizeYouTubeSource(source, parsed)) {
+      await storePut('sources', source);
+      persistSourceSnapshot();
+      text = await fetchFeed(source.feedUrl);
+      parsed = parseFeed(text, source.feedUrl);
+    }
     updateSourceMetadata(source, parsed, text);
     await storePut('sources', source);
     persistSourceSnapshot();
@@ -1104,6 +1220,16 @@ async function fetchSource(sourceId, preParsed, preText) {
     let parsed = preParsed;
     let feedText = preText || '';
     if (!parsed) {
+      if (canonicalizeYouTubeSource(source)) {
+        await storePut('sources', source);
+        persistSourceSnapshot();
+      }
+      feedText = await fetchFeed(source.feedUrl);
+      parsed = parseFeed(feedText, source.feedUrl);
+    }
+    if (canonicalizeYouTubeSource(source, parsed)) {
+      await storePut('sources', source);
+      persistSourceSnapshot();
       feedText = await fetchFeed(source.feedUrl);
       parsed = parseFeed(feedText, source.feedUrl);
     }
@@ -1128,6 +1254,7 @@ async function fetchSource(sourceId, preParsed, preText) {
         duration: it.duration,
         publishedAt: it.publishedAt || now,
         kind: it.kind === 'article' && source.type === 'youtube' ? 'youtube' : it.kind,
+        youtubeShort: !!it.youtubeShort,
         fetchedAt: now,
       });
     }
@@ -1142,7 +1269,7 @@ async function fetchSource(sourceId, preParsed, preText) {
       if (old) {
         if (old.publishedAt === n.publishedAt && old.title === n.title && old.summary === n.summary &&
             old.author === n.author && old.link === n.link && old.imageUrl === n.imageUrl &&
-            old.duration === n.duration && old.kind === n.kind) continue;
+            old.duration === n.duration && old.kind === n.kind && old.youtubeShort === n.youtubeShort) continue;
         toPut.push(Object.assign({}, old, n, { id: old.id }));
       } else {
         toPut.push(n);
@@ -1210,6 +1337,57 @@ async function upgradeYouTubeSourceIcons() {
     } catch (e) { /* keep the existing fallback icon */ }
   }));
   if (changed) renderAll();
+}
+
+async function purgeKnownYouTubeShorts(source) {
+  if (!isYouTubeSource(source) || source.youtubeShortsCheckedAt) return;
+  const shortsFeedUrl = youtubeShortsFeedUrl(source.channelId);
+  if (!shortsFeedUrl) return;
+
+  try {
+    const text = await fetchFeed(shortsFeedUrl);
+    const parsed = parseFeed(text, shortsFeedUrl, { includeYouTubeShorts: true });
+    const shortGuids = new Set(parsed.items.map((item) => item.guid));
+    const drop = state.items
+      .filter((item) => item.sourceId === source.id && (shortGuids.has(item.guid) || isFilteredYouTubeItem(item)))
+      .map((item) => item.id);
+    if (drop.length) {
+      await deleteItemsByIds(drop);
+      state.items = await storeGetAll('items');
+    }
+    source.youtubeShortsCheckedAt = new Date().toISOString();
+    await storePut('sources', source);
+    persistSourceSnapshot();
+    if (drop.length) renderAll();
+  } catch (e) { /* the Videos playlist is already the primary filter */ }
+}
+
+async function upgradeYouTubeSources() {
+  const pending = state.sources.filter((source) =>
+    isYouTubeSource(source) && (!isYouTubeVideosFeedUrl(source.feedUrl) || !source.youtubeShortsCheckedAt));
+  if (!pending.length) return;
+
+  await Promise.all(pending.map(async (source) => {
+    if (!state.sources.some((candidate) => candidate.id === source.id)) return;
+
+    let channelId = youtubeChannelIdFromSource(source);
+    if (!channelId) {
+      const page = youtubeChannelPageUrl(source);
+      if (page) {
+        try { channelId = await youtubeChannelIdFromPage(page); } catch (e) { /* feed parsing below may reveal it */ }
+      }
+      if (channelId) {
+        source.channelId = channelId;
+        source.channelUrl = source.channelUrl || page;
+      }
+    }
+
+    const changed = canonicalizeYouTubeSource(source);
+    if (!isYouTubeVideosFeedUrl(source.feedUrl) || changed) {
+      await fetchSource(source.id);
+    }
+    await purgeKnownYouTubeShorts(source);
+  }));
 }
 
 async function removeSource(id) {
@@ -1298,6 +1476,12 @@ function sourceBadge(source) {
 
 function isAudioItem(item) {
   return !!item && (item.kind === 'podcast' || !!item.audioUrl);
+}
+
+function isFilteredYouTubeItem(item) {
+  if (!item || item.kind !== 'youtube') return false;
+  return !!item.youtubeShort || isYouTubeShortUrl(item.link) ||
+    hasYouTubeShortMarker(String(item.title || '') + ' ' + String(item.summary || ''));
 }
 
 function cardTarget(item, source) {
@@ -1407,7 +1591,7 @@ function renderDay() {
   const key = dayKey(day);
   const view = $('#dayview');
   const items = state.items
-    .filter((i) => i.day === key)
+    .filter((i) => i.day === key && !isFilteredYouTubeItem(i))
     .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
 
@@ -1943,9 +2127,11 @@ async function init() {
   initAutoRefresh();
 
   renderAll();
-  void upgradeYouTubeSourceIcons();
-  void upgradeMissingArticleImages();
-  maybeAutoRefresh();
+  void Promise.all([
+    upgradeYouTubeSourceIcons(),
+    upgradeMissingArticleImages(),
+    upgradeYouTubeSources(),
+  ]).then(() => maybeAutoRefresh()).catch(() => maybeAutoRefresh());
 
   // keyboard: day navigation, ESC to close overlays
   document.addEventListener('keydown', (e) => {

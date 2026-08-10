@@ -42,8 +42,9 @@ Everything runs in your browser and everything stays on your device:
     byline, and a pulled summary.
     Substack audio posts keep this same editorial card layout, with their
     duration in the metadata and a **Listen** action.
-  - *Video* — YouTube channels, with thumbnail, title, channel profile icon
-    and a duration badge where the feed provides one.
+  - *Video* — YouTube channels, using the channel's long-form **Videos**
+    playlist so Shorts are excluded, with thumbnail, title, channel profile
+    icon and a duration badge where the feed provides one.
   - *Podcast* — native audio RSS feeds, with artwork or the show's source logo,
     show name, episode duration and a link into Apple Podcasts (resolved via
     the iTunes search API at add time).
@@ -71,8 +72,8 @@ Everything runs in your browser and everything stays on your device:
    For podcasts it also
    looks up the show on Apple Podcasts so cards can deep-link into the app.
 2. **Fetching.** Feeds are parsed in the browser (RSS 2.0, Atom, and the
-   YouTube channel feed). Each item is bucketed into the *device-local* day
-   its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
+   YouTube Videos playlist feed). Each item is bucketed into the *device-local*
+   day its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
 3. **The calendar.** The strip covers roughly 4 months back and 2 weeks
    forward from today, extending as you scroll. Each bubble shows a live
    day/month date; the day view shows that day's feed items newest-first.
@@ -141,7 +142,8 @@ Apple's iTunes Search API (podcast lookup), and YouTube's oEmbed endpoint
 
 ## Design
 
-Monochrome Apple Human Interface Guidelines, using the neutral greys from
+Monochrome Apple Human Interface Guidelines with a web implementation of the
+Liquid Glass material for navigation and interactive controls, using the neutral greys from
 gabrielepizzi.com (gbrlpzz/index). System grouped background and card
 surfaces, translucent blurred navigation bars, label/secondary/tertiary text,
 system-fill pills, continuous-corner cards, SF-style glyphs drawn inline,
