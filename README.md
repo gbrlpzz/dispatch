@@ -1,5 +1,7 @@
 # Dispatch
 
+![Dispatch preview](preview.svg)
+
 **A minimal, private, distraction-free personal feed, arranged by day.**
 
 Dispatch is a small, focused tool in the spirit of *minimal, effective,
