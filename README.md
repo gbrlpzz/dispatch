@@ -35,11 +35,13 @@ Everything runs in your browser and everything stays on your device:
 - **Three kinds of sources, fully extracted.**
   - *Text* — Substack and any RSS/Atom feed: cover image (pulled from the
     post's media or first embedded image), byline, and a pulled summary.
-  - *Video* — YouTube channels, with thumbnail, title, channel and a duration
-    badge where the feed provides one.
-  - *Podcast* — any audio RSS feed, with artwork, show name, episode duration
-    and a link into Apple Podcasts (resolved via the iTunes search API at add
-    time).
+    Substack audio posts keep this same editorial card layout, with their
+    duration in the metadata and a **Listen** action.
+  - *Video* — YouTube channels, with thumbnail, title, channel profile icon
+    and a duration badge where the feed provides one.
+  - *Podcast* — native audio RSS feeds, with artwork or the show's source logo,
+    show name, episode duration and a link into Apple Podcasts (resolved via
+    the iTunes search API at add time).
 - **Manage sources.** A Sources screen lists everything you follow, with
   swipe-to-delete. Removing a source removes its items from the past, the
   present and the future.

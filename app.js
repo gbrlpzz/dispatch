@@ -36,6 +36,24 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url || ''; }
 }
 
+function isSubstackHostname(host) {
+  const h = String(host || '').replace(/^www\./, '').toLowerCase();
+  return h.endsWith('.substack.com') && h !== 'substack.com';
+}
+
+function isSubstackSource(source) {
+  if (!source) return false;
+  const platform = String(source.platform || '').toLowerCase();
+  return platform === 'substack' ||
+    isSubstackHostname(hostOf(source.url)) ||
+    isSubstackHostname(hostOf(source.feedUrl));
+}
+
+function isYouTubeHost(host) {
+  const h = String(host || '').replace(/^www\./, '').toLowerCase();
+  return h === 'youtube.com' || h.endsWith('.youtube.com') || h === 'youtu.be';
+}
+
 /* ---------------- Dates (device-local days) ---------------- */
 
 const DAY_MS = 86400000;
@@ -276,6 +294,20 @@ function childAttr(node, locals, attr) {
   }
   return '';
 }
+
+function childUrl(node, locals) {
+  for (const l of locals) {
+    const c = localChildren(node, l)[0];
+    if (!c) continue;
+    for (const attr of ['href', 'url', 'src']) {
+      const v = c.getAttribute(attr);
+      if (v && v.trim()) return v.trim();
+    }
+    const text = (c.textContent || '').trim();
+    if (/^(?:https?:)?\/\//i.test(text)) return text;
+  }
+  return '';
+}
 function attrOf(node, names) {
   for (const n of names) {
     const v = node.getAttribute(n);
@@ -324,28 +356,30 @@ function parseFeed(text, feedUrl) {
   const root = doc.documentElement;
   const rootName = String(root.tagName || '').toLowerCase();
 
-  let feedTitle = '', feedLink = '', feedIcon = '';
+  let feedTitle = '', feedLink = '', feedIcon = '', feedGenerator = '';
   const items = [];
 
   if (rootName === 'rss' || rootName === 'rdf') {
     const channel = localChildren(root, 'channel')[0] || root;
     feedTitle = childText(channel, ['title']) || hostOf(feedUrl);
     feedLink = childText(channel, ['link']) || feedUrl;
+    feedGenerator = childText(channel, ['generator']);
     const img = localChildren(channel, 'image')[0];
-    if (img) feedIcon = childText(img, ['url']);
-    feedIcon = feedIcon || childAttr(channel, ['image'], 'href') || '';
+    if (img) feedIcon = childUrl(img, ['url']);
+    feedIcon = feedIcon || childUrl(channel, ['image', 'icon', 'logo', 'thumbnail']);
     const entries = localChildren(channel, 'item');
     for (const it of entries) items.push(parseRssItem(it));
   } else if (rootName === 'feed') {
     feedTitle = childText(root, ['title']) || hostOf(feedUrl);
     feedLink = childAttr(root, ['link'], 'href') || feedUrl;
-    feedIcon = childAttr(root, ['icon', 'logo'], 'href') || childText(root, ['icon', 'logo']) || '';
+    feedGenerator = childText(root, ['generator']);
+    feedIcon = childUrl(root, ['icon', 'logo', 'image']);
     const entries = localChildren(root, 'entry');
     for (const it of entries) items.push(parseAtomItem(it));
   } else {
     throw new Error('Unrecognized feed format.');
   }
-  return { feedTitle, feedLink, feedIcon, items };
+  return { feedTitle, feedLink, feedIcon, feedGenerator, items };
 }
 
 function parseRssItem(it) {
@@ -362,13 +396,14 @@ function parseRssItem(it) {
   const encUrl = enclosure ? enclosure.getAttribute('url') || '' : '';
   const encType = enclosure ? enclosure.getAttribute('type') || '' : '';
 
-  const isAudio = /^audio\//.test(encType);
+  const isAudio = /^audio\//.test(encType) || /\.(?:mp3|m4a|m4b|aac|ogg|oga|opus|wav)(?:[?#]|$)/i.test(encUrl);
   const isImage = /^image\//.test(encType);
 
   // media group / thumbnail / content
   const mediaGroup = localChildren(it, 'group')[0] || it;
   let thumb = childAttr(mediaGroup, ['thumbnail', 'content'], 'url') || childAttr(it, ['thumbnail', 'content'], 'url');
   if (!thumb && isImage) thumb = encUrl;
+  const itemImage = childUrl(it, ['image']);
   const mediaDur = parseDuration(attrOf(mediaGroup, ['duration']) || attrOf(it, ['duration']));
 
   const itunesDur = parseDuration(childText(it, ['duration']));
@@ -376,7 +411,7 @@ function parseRssItem(it) {
 
   const kind = isAudio ? 'podcast' : 'article';
   const image = kind === 'podcast'
-    ? (childAttr(it, ['image'], 'href') || thumb || '')
+    ? (itemImage || thumb || firstImage(contentHtml || descHtml) || '')
     : (thumb || firstImage(contentHtml || descHtml) || '');
 
   return {
@@ -404,11 +439,12 @@ function parseAtomItem(en) {
   const mediaGroup = localChildren(en, 'group')[0] || en;
   let thumb = childAttr(mediaGroup, ['thumbnail', 'content'], 'url');
   const mediaDur = parseDuration(attrOf(mediaGroup, ['duration']) || attrOf(en, ['duration']));
+  const itemImage = childUrl(en, ['image']);
 
   const enclosure = localChildren(en, 'enclosure')[0];
   const encUrl = enclosure ? enclosure.getAttribute('url') || '' : '';
   const encType = enclosure ? enclosure.getAttribute('type') || '' : '';
-  const isAudio = /^audio\//.test(encType);
+  const isAudio = /^audio\//.test(encType) || /\.(?:mp3|m4a|m4b|aac|ogg|oga|opus|wav)(?:[?#]|$)/i.test(encUrl);
 
   const contentHtml = childText(en, ['summary', 'content']);
   const summary = truncate(stripHtml(contentHtml), 340);
@@ -420,7 +456,7 @@ function parseAtomItem(en) {
   const kind = isAudio ? 'podcast' : (isYouTube ? 'youtube' : 'article');
   const image = isYouTube
     ? (thumb || 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg')
-    : (thumb || firstImage(contentHtml) || (isAudio ? childAttr(en, ['image'], 'href') : ''));
+    : (thumb || itemImage || firstImage(contentHtml) || '');
 
   return {
     guid: guid || (link + title),
@@ -468,6 +504,99 @@ async function youtubeChannelIdFromPage(handleUrl) {
             text.match(/"externalId":"(UC[\w-]{22})"/) ||
             text.match(/"browseId":"(UC[\w-]{22})"/);
   return m ? m[1] : null;
+}
+
+function youtubeChannelIdFromFeedUrl(feedUrl) {
+  const m = String(feedUrl || '').match(/[?&]channel_id=(UC[\w-]{22})/i);
+  return m ? m[1] : null;
+}
+
+function decodeRemoteUrl(value) {
+  return String(value || '')
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\u003d/gi, '=')
+    .replace(/\\\//g, '/')
+    .replace(/&amp;/gi, '&')
+    .replace(/\\"/g, '"')
+    .trim();
+}
+
+function metaContent(html, name) {
+  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const key = (tag.match(/\b(?:property|name)=['"]([^'"]+)['"]/i) || [])[1] || '';
+    if (key.toLowerCase() !== name.toLowerCase()) continue;
+    const content = (tag.match(/\bcontent=['"]([^'"]+)['"]/i) || [])[1] || '';
+    if (content) return decodeRemoteUrl(content);
+  }
+  return '';
+}
+
+function youtubeChannelAvatarFromHtml(html) {
+  const ogImage = metaContent(html, 'og:image');
+  if (ogImage) return ogImage;
+
+  // Channel pages embed the same avatar in several renderer shapes. Prefer
+  // the channel header/metadata blocks, then use a bounded generic fallback.
+  const patterns = [
+    /"c4TabbedHeaderRenderer"[\s\S]{0,12000}?"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[([\s\S]*?)\]/i,
+    /"channelMetadataRenderer"[\s\S]{0,12000}?"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[([\s\S]*?)\]/i,
+    /"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[([\s\S]*?)\]/i,
+  ];
+  for (const pattern of patterns) {
+    const match = String(html || '').match(pattern);
+    if (!match) continue;
+    const urls = [...match[1].matchAll(/"url"\s*:\s*"([^"]+)"/gi)].map((m) => decodeRemoteUrl(m[1]));
+    if (urls.length) return urls[urls.length - 1];
+  }
+  return '';
+}
+
+function youtubeChannelPageUrl(source) {
+  if (!source) return '';
+  if (source.channelUrl) return source.channelUrl;
+  const channelId = source.channelId || youtubeChannelIdFromFeedUrl(source.feedUrl);
+  if (channelId) return 'https://www.youtube.com/channel/' + channelId;
+  try {
+    const u = new URL(source.url || '');
+    if (isYouTubeHost(u.hostname) && !/\/watch\b|\/shorts\//i.test(u.pathname) && u.hostname !== 'youtu.be') {
+      return u.href;
+    }
+  } catch (e) { /* use the feed URL fallback below */ }
+  return '';
+}
+
+function needsYouTubeChannelIcon(source) {
+  return !!source && (String(source.platform || '').toLowerCase() === 'youtube' || source.type === 'youtube') && !source.channelIconUrl;
+}
+
+async function saveYouTubeChannelIcon(source, image) {
+  if (!image || !source || !state.sources.some((s) => s.id === source.id)) return;
+  source.channelIconUrl = image;
+  source.iconUrl = image;
+  await storePut('sources', source);
+  renderAll();
+}
+
+async function youtubeChannelImageFromSource(source) {
+  const candidates = [];
+  const page = youtubeChannelPageUrl(source);
+  if (page) candidates.push(page);
+  if (source && source.channelId) candidates.push('https://www.youtube.com/channel/' + source.channelId);
+  const fallbackId = youtubeChannelIdFromFeedUrl(source && source.feedUrl);
+  if (fallbackId) candidates.push('https://www.youtube.com/channel/' + fallbackId);
+
+  const seen = new Set();
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      const { text } = await fetchText(candidate);
+      const image = youtubeChannelAvatarFromHtml(text);
+      if (image) return image;
+    } catch (e) { /* try the next channel URL */ }
+  }
+  return '';
 }
 
 async function oembed(url) {
@@ -539,24 +668,28 @@ async function resolveFeedUrl(raw, options = {}) {
   const url = normalizeUrl(raw);
   const u = new URL(url);
   const host = u.hostname.replace(/^www\./, '').toLowerCase();
-  const isYouTubeHost = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
-  const isSubstackHost = host.endsWith('.substack.com') && host !== 'substack.com';
+  const youtubeHost = isYouTubeHost(host);
+  const substackHost = isSubstackHostname(host);
 
   // Substack's publication feed is stable at /feed. Do not download the
   // heavy publication page first; persist the source immediately and let the
   // background hydrator fetch the feed once.
-  if (isSubstackHost) {
-    return { kind: 'source', type: 'article', url, feedUrl: u.origin + '/feed' };
+  if (substackHost) {
+    return { kind: 'source', type: 'article', platform: 'substack', url, feedUrl: u.origin + '/feed' };
   }
 
   // --- YouTube ---
-  if (isYouTubeHost) {
+  if (youtubeHost) {
     const user = youtubeUserFromUrl(u);
     if (user) {
       // YouTube still supports its lightweight legacy user RSS endpoint for
       // many app-shared handles. Try it first; hydration falls back to page
       // channel-id extraction when a handle is not mapped there.
-      return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user) };
+      return {
+        kind: 'source', type: 'youtube', platform: 'youtube', url,
+        channelUrl: url,
+        feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user),
+      };
     }
     const isSingleVideo = host === 'youtu.be' || /\/watch\b/.test(u.pathname) || /\/shorts\//.test(u.pathname);
     const hasPlaylist = !!u.searchParams.get('list');
@@ -573,15 +706,27 @@ async function resolveFeedUrl(raw, options = {}) {
         try {
           const authorPage = new URL(authorUrl);
           channelId = youtubeChannelIdFromUrl(authorPage);
-          if (channelId) return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId };
+          if (channelId) return {
+            kind: 'source', type: 'youtube', platform: 'youtube', url,
+            channelId, channelUrl: authorPage.href,
+            feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+          };
           const authorUser = youtubeUserFromUrl(authorPage);
-          if (authorUser) return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(authorUser) };
+          if (authorUser) return {
+            kind: 'source', type: 'youtube', platform: 'youtube', url,
+            channelUrl: authorPage.href,
+            feedUrl: 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(authorUser),
+          };
         } catch (e) { /* resolve below */ }
         channelId = await youtubeChannelIdFromPage(authorUrl);
       }
       if (!channelId && hasPlaylist) channelId = await youtubeChannelIdFromPage(url);
       if (channelId) {
-        return { kind: 'source', type: 'youtube', url, feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId };
+        return {
+          kind: 'source', type: 'youtube', platform: 'youtube', url,
+          channelId, channelUrl: url,
+          feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
+        };
       }
       if (isSingleVideo) {
         throw new Error('Could not identify the YouTube channel from this video. Paste the channel page URL instead.');
@@ -592,7 +737,10 @@ async function resolveFeedUrl(raw, options = {}) {
     return {
       kind: 'source',
       type: 'youtube',
+      platform: 'youtube',
       url,
+      channelId,
+      channelUrl: url,
       feedUrl: 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId,
     };
   }
@@ -608,6 +756,7 @@ async function resolveFeedUrl(raw, options = {}) {
         return {
           kind: 'source',
           type: 'podcast',
+          platform: 'podcast',
           url,
           feedUrl: result.feedUrl,
           appleUrl: result.collectionViewUrl || url,
@@ -619,7 +768,7 @@ async function resolveFeedUrl(raw, options = {}) {
   // --- Feed-looking URL ---
   const likelyFeedPath = /(?:^|\/)(?:feed(?:\/podcast)?|podcast\/(?:rss|feed)|rss|atom)(?:\/)?$/i.test(u.pathname) || /\.(xml|rss|atom)$/i.test(u.pathname);
   if (likelyFeedPath) {
-    return { kind: 'source', type: 'article', url, feedUrl: url };
+    return { kind: 'source', type: 'article', platform: 'rss', url, feedUrl: url };
   }
 
   const origin = u.origin;
@@ -627,7 +776,7 @@ async function resolveFeedUrl(raw, options = {}) {
     // Most publication platforms (including custom-domain Substacks) expose
     // /feed. Persist that candidate immediately; hydrateSource performs the
     // full discovery fallback if this candidate is not a feed.
-    return { kind: 'source', type: 'article', url, feedUrl: origin + '/feed', optimistic: true };
+    return { kind: 'source', type: 'article', platform: 'rss', url, feedUrl: origin + '/feed', optimistic: true };
   }
 
   // --- Page scan + common feed paths ---
@@ -636,13 +785,13 @@ async function resolveFeedUrl(raw, options = {}) {
   // immediate without requiring a preview request first.
   const pagePromise = findFeedLinkInHtml(url).then((found) => {
     if (!found) throw new Error('No alternate feed link');
-    return { kind: 'source', type: 'article', url, feedUrl: found };
+    return { kind: 'source', type: 'article', platform: 'rss', url, feedUrl: found };
   });
   const quickCandidates = feedCandidates(origin).slice(0, 3);
   const quickPromise = Promise.any(quickCandidates.map(async (cand) => {
     const { text } = await fetchText(cand);
     if (!looksLikeFeed(text)) throw new Error('Not a feed');
-    return { kind: 'source', type: 'article', url, feedUrl: cand, feedText: text };
+    return { kind: 'source', type: 'article', platform: 'rss', url, feedUrl: cand, feedText: text };
   }));
   try {
     return await Promise.any([pagePromise, quickPromise]);
@@ -650,7 +799,7 @@ async function resolveFeedUrl(raw, options = {}) {
     for (const cand of feedCandidates(origin).slice(3)) {
       try {
         const { text } = await fetchText(cand);
-        if (looksLikeFeed(text)) return { kind: 'source', type: 'article', url, feedUrl: cand, feedText: text };
+        if (looksLikeFeed(text)) return { kind: 'source', type: 'article', platform: 'rss', url, feedUrl: cand, feedText: text };
       } catch (err) { /* keep trying */ }
     }
   }
@@ -669,6 +818,41 @@ async function itunesLookup(showName) {
     if (!res) return null;
     return { itunesId: res.collectionId, itunesUrl: res.collectionViewUrl };
   } catch (e) { return null; }
+}
+
+function isSubstackFeed(parsed, feedUrl, feedText) {
+  if (isSubstackHostname(hostOf(feedUrl))) return true;
+  if (/\bsubstack\b/i.test(String(parsed && parsed.feedGenerator || ''))) return true;
+  return /<generator\b[^>]*>\s*Substack\s*<\/generator>/i.test(String(feedText || '').slice(0, 12000));
+}
+
+function updateSourceMetadata(source, parsed, feedText) {
+  if (!source || !parsed) return;
+
+  if (isSubstackSource(source) || isSubstackFeed(parsed, source.feedUrl, feedText)) {
+    source.platform = 'substack';
+  } else if (!source.platform) {
+    source.platform = source.type === 'youtube' ? 'youtube' : source.type === 'podcast' ? 'podcast' : 'rss';
+  }
+
+  const hasAudio = parsed.items.some((item) => item.kind === 'podcast' || item.audioUrl);
+  const hasItunes = /<itunes:/i.test(String(feedText || '').slice(0, 12000));
+  if (source.platform === 'substack') {
+    // Audio posts are still publication posts: they use the editorial card
+    // anatomy and should not turn the whole Substack into a native podcast.
+    source.type = 'article';
+  } else if (source.platform === 'youtube') {
+    source.type = 'youtube';
+  } else if (hasAudio || hasItunes || source.platform === 'podcast') {
+    source.type = 'podcast';
+    source.platform = 'podcast';
+  } else if (!source.type) {
+    source.type = 'article';
+  }
+
+  source.title = parsed.feedTitle || source.title;
+  source.siteUrl = parsed.feedLink || source.siteUrl;
+  source.iconUrl = source.channelIconUrl || parsed.feedIcon || source.iconUrl || ('https://' + hostOf(source.feedUrl) + '/favicon.ico');
 }
 
 /* ---------------- Add source / fetch ---------------- */
@@ -692,8 +876,12 @@ async function addSource(rawUrl) {
     feedUrl,
     title: resolved.title || hostOf(resolved.url),
     type: initialType,
+    platform: resolved.platform || initialType,
     siteUrl: resolved.url,
     iconUrl: 'https://' + hostOf(feedUrl) + '/favicon.ico',
+    channelId: resolved.channelId || null,
+    channelUrl: resolved.channelUrl || null,
+    channelIconUrl: null,
     itunesId: resolved.appleId || null,
     itunesUrl: resolved.appleUrl || null,
     addedAt: new Date().toISOString(),
@@ -721,6 +909,8 @@ async function hydrateSource(source, resolved) {
       if (source.type === 'youtube' && /feeds\/videos\.xml\?user=/i.test(source.feedUrl)) {
         const channelId = await youtubeChannelIdFromPage(source.url);
         if (!channelId) throw firstError;
+        source.channelId = channelId;
+        source.channelUrl = source.channelUrl || source.url;
         source.feedUrl = 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId;
         text = await fetchFeed(source.feedUrl);
       } else if (resolved.optimistic) {
@@ -736,18 +926,12 @@ async function hydrateSource(source, resolved) {
       }
     }
     const parsed = parseFeed(text, source.feedUrl);
-    let type = source.type;
-    if (parsed.items.some((i) => i.kind === 'podcast') || /<itunes:/i.test(text.slice(0, 3000))) type = 'podcast';
-    if (resolved.type === 'youtube') type = 'youtube';
-    source.type = type;
-    source.title = parsed.feedTitle || source.title;
-    source.siteUrl = parsed.feedLink || source.siteUrl;
-    source.iconUrl = parsed.feedIcon || source.iconUrl;
+    updateSourceMetadata(source, parsed, text);
     await storePut('sources', source);
 
     // Item parsing/storage happens independently of the optional Apple
     // Podcasts search, so a slow lookup never delays the feed itself.
-    const lookup = type === 'podcast' && !source.itunesUrl
+    const lookup = source.type === 'podcast' && !source.itunesUrl
       ? itunesLookup(parsed.feedTitle)
       : Promise.resolve(null);
     await fetchSource(source.id, parsed, text);
@@ -774,13 +958,15 @@ async function fetchSource(sourceId, preParsed, preText) {
   if (!source) return;
   try {
     let parsed = preParsed;
+    let feedText = preText || '';
     if (!parsed) {
-      const text = await fetchFeed(source.feedUrl);
-      parsed = parseFeed(text, source.feedUrl);
+      feedText = await fetchFeed(source.feedUrl);
+      parsed = parseFeed(feedText, source.feedUrl);
     }
-    source.title = parsed.feedTitle || source.title;
-    source.siteUrl = parsed.feedLink || source.siteUrl;
-    source.iconUrl = parsed.feedIcon || source.iconUrl || ('https://' + hostOf(source.feedUrl) + '/favicon.ico');
+    updateSourceMetadata(source, parsed, feedText);
+    const channelIconPromise = needsYouTubeChannelIcon(source)
+      ? youtubeChannelImageFromSource(source).catch(() => '')
+      : null;
 
     const now = new Date().toISOString();
     const normalized = [];
@@ -810,7 +996,9 @@ async function fetchSource(sourceId, preParsed, preText) {
     for (const n of uniq) {
       const old = byGuid.get(n.guid);
       if (old) {
-        if (old.publishedAt === n.publishedAt && old.title === n.title && old.summary === n.summary) continue;
+        if (old.publishedAt === n.publishedAt && old.title === n.title && old.summary === n.summary &&
+            old.author === n.author && old.link === n.link && old.imageUrl === n.imageUrl &&
+            old.duration === n.duration && old.kind === n.kind) continue;
         toPut.push(Object.assign({}, old, n, { id: old.id }));
       } else {
         toPut.push(n);
@@ -839,6 +1027,9 @@ async function fetchSource(sourceId, preParsed, preText) {
     source.lastFetchedAt = now;
     source.lastError = null;
     await storePut('sources', source);
+    if (channelIconPromise) {
+      void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
+    }
   } catch (err) {
     source.lastError = err && err.message ? err.message : String(err);
     await storePut('sources', source);
@@ -857,6 +1048,21 @@ async function refreshAll(force) {
   } finally {
     state.fetching = false;
   }
+}
+
+async function upgradeYouTubeSourceIcons() {
+  const pending = state.sources.filter(needsYouTubeChannelIcon);
+  if (!pending.length) return;
+  let changed = false;
+  await Promise.all(pending.map(async (source) => {
+    try {
+      const image = await youtubeChannelImageFromSource(source);
+      if (!image || !state.sources.some((s) => s.id === source.id)) return;
+      await saveYouTubeChannelIcon(source, image);
+      changed = true;
+    } catch (e) { /* keep the existing fallback icon */ }
+  }));
+  if (changed) renderAll();
 }
 
 async function removeSource(id) {
@@ -942,18 +1148,23 @@ function sourceBadge(source) {
   return '<span class="source-badge" aria-hidden="true">' + letter + '</span>';
 }
 
+function isAudioItem(item) {
+  return !!item && (item.kind === 'podcast' || !!item.audioUrl);
+}
+
 function cardTarget(item, source) {
   if (item.kind === 'youtube') {
     const vid = item.rawVideoId || (item.link || '').match(/[?&]v=([\w-]+)/);
     return item.link || 'https://www.youtube.com/watch?v=' + (typeof vid === 'string' ? vid : (vid ? vid[1] : ''));
   }
-  if (item.kind === 'podcast' && source && source.itunesUrl) return source.itunesUrl;
+  if (isAudioItem(item) && !isSubstackSource(source) && source && source.itunesUrl) return source.itunesUrl;
   return item.link || item.audioUrl || (source ? source.siteUrl : '#');
 }
 
 function pillLabel(item, source) {
   if (item.kind === 'youtube') return 'Watch on YouTube';
-  if (item.kind === 'podcast') {
+  if (isAudioItem(item)) {
+    if (isSubstackSource(source)) return 'Listen';
     return source && source.itunesId ? 'Listen in Podcasts' : 'Listen';
   }
   return source && /substack/i.test(source.title) ? 'Read on Substack' : 'Read';
@@ -966,22 +1177,25 @@ function buildItemCard(item, source) {
   card.rel = 'noopener noreferrer';
   card.setAttribute('role', 'link');
 
+  const substack = isSubstackSource(source);
+  const podcastImage = item.imageUrl || (source && source.iconUrl) || '';
+  const editorialImage = item.imageUrl || (substack ? podcastImage : '');
   let media = '';
   if (item.kind === 'youtube' && item.imageUrl) {
     media = '<div class="card-media">' +
       '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
       (item.duration ? '<span class="duration-badge mono-glyph">' + fmtDuration(item.duration) + '</span>' : '') +
       '</div>';
-  } else if (item.kind === 'article' && item.imageUrl) {
+  } else if ((item.kind === 'article' || substack) && editorialImage) {
     media = '<div class="card-media">' +
-      '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
       '</div>';
   }
 
   let body;
-  if (item.kind === 'podcast') {
-    const art = item.imageUrl
-      ? '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">'
+  if (isAudioItem(item) && !substack) {
+    const art = podcastImage
+      ? '<img src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
       : KIND_META.podcast.icon;
     body =
       '<div class="pod-row">' +
@@ -993,9 +1207,10 @@ function buildItemCard(item, source) {
         '</div>' +
       '</div>';
   } else {
+    const metadata = [item.author, substack && item.duration ? fmtDuration(item.duration) : ''].filter(Boolean).join(' · ');
     body =
       '<h3 class="card-title">' + esc(item.title) + '</h3>' +
-      (item.author ? '<p class="card-byline">' + esc(item.author) + '</p>' : '') +
+      (metadata ? '<p class="card-byline">' + esc(metadata) + '</p>' : '') +
       (item.summary ? '<p class="card-summary">' + esc(item.summary) + '</p>' : '');
   }
 
@@ -1064,11 +1279,15 @@ function typeLabel(t) {
   return t === 'youtube' ? 'YouTube' : t === 'podcast' ? 'Podcast' : 'Text feed';
 }
 
+function sourceTypeLabel(source) {
+  return isSubstackSource(source) ? 'Text feed' : typeLabel(source.type);
+}
+
 function sourceSub(source) {
-  if (state.fetchingSourceIds.has(source.id)) return typeLabel(source.type) + ' · fetching…';
+  if (state.fetchingSourceIds.has(source.id)) return sourceTypeLabel(source) + ' · fetching…';
   if (source.lastError) return 'Error — ' + source.lastError;
-  if (source.lastFetchedAt) return typeLabel(source.type) + ' · updated ' + timeAgo(source.lastFetchedAt);
-  return typeLabel(source.type) + ' · not fetched yet';
+  if (source.lastFetchedAt) return sourceTypeLabel(source) + ' · updated ' + timeAgo(source.lastFetchedAt);
+  return sourceTypeLabel(source) + ' · not fetched yet';
 }
 
 function buildSourceRow(source, onDelete) {
@@ -1562,6 +1781,7 @@ async function init() {
   initAutoRefresh();
 
   renderAll();
+  void upgradeYouTubeSourceIcons();
   maybeAutoRefresh();
 
   // keyboard: day navigation, ESC to close overlays
