@@ -4,7 +4,7 @@
    the network. */
 'use strict';
 
-const VERSION = 'dispatch-v14';
+const VERSION = 'dispatch-v15';
 const SHELL = [
   './',
   './index.html',
@@ -17,6 +17,7 @@ const SHELL = [
   './icons/favicon-64.png',
   './icons/favicon.svg',
 ];
+const SHELL_PATHS = new Set(SHELL.map((path) => new URL(path, self.location).pathname));
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -41,19 +42,23 @@ self.addEventListener('fetch', (event) => {
   // Never intercept cross-origin requests (feed fetching, images, oEmbed).
   if (url.origin !== self.location.origin) return;
 
-  // App shell: cache-first, then network.
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      const fetched = fetch(req)
+  // Check the app shell first so a desktop-installed copy sees a new deploy
+  // on its next open. If offline, fall back to the last known shell. The
+  // cache contains only app files; IndexedDB sources are never touched here.
+  if (req.mode === 'navigate' || SHELL_PATHS.has(url.pathname)) {
+    event.respondWith(
+      fetch(req)
         .then((res) => {
-          if (res && res.ok && req.mode === 'navigate') {
+          if (res && res.ok) {
             const copy = res.clone();
-            caches.open(VERSION).then((cache) => cache.put('./index.html', copy));
+            event.waitUntil(caches.open(VERSION).then((cache) => cache.put(req, copy)));
           }
           return res;
         })
-        .catch(() => cached);
-      return cached || fetched;
-    })
-  );
+        .catch(() => caches.match(req).then((cached) => cached || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(caches.match(req).then((cached) => cached || fetch(req)));
 });

@@ -19,6 +19,10 @@ Everything runs in your browser and everything stays on your device:
 - **Local persistence.** Sources and feed items live in IndexedDB on
   your device, and Dispatch asks the browser for persistent storage, so your
   history survives restarts and works offline.
+- **Desktop-friendly updates.** An installed copy checks for a new app shell
+  when it opens and reloads into it automatically, while IndexedDB stays
+  untouched. A small local source manifest can restore your subscriptions if
+  the browser ever evicts the database.
 - **Local feed pulling.** Feed fetching happens in your browser. Feeds that
   allow direct access are read directly; feeds that block browser requests
   fall back to a small list of public CORS proxies, in order. No feed data

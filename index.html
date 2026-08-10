@@ -76,7 +76,30 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function () {});
+        var hadController = !!navigator.serviceWorker.controller;
+        var reloading = false;
+        var registration = null;
+
+        function checkForUpdate() {
+          if (registration) registration.update().catch(function () {});
+        }
+
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          // The first install needs no reload. On later updates, reload once
+          // so the desktop-installed app picks up the new app shell promptly.
+          if (!hadController || reloading) return;
+          reloading = true;
+          window.location.reload();
+        });
+
+        navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+          .then(function (nextRegistration) {
+            registration = nextRegistration;
+            return registration.update();
+          })
+          .catch(function () {});
+
+        window.addEventListener('focus', checkForUpdate);
       });
     }
   </script>

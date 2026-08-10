@@ -125,6 +125,7 @@ const state = {
 
 const STALE_OPEN_MS = 12 * 3600000;
 const STALE_IDLE_MS = 24 * 3600000;
+const SOURCE_SNAPSHOT_KEY = 'dispatch.source-snapshot.v1';
 
 const sheetEl = () => $('#sheet');
 const sourcesScreenEl = () => $('#sources-screen');
@@ -173,6 +174,46 @@ async function storeBulkPut(store, values) {
   const os = tx.objectStore(store);
   for (const v of values) os.put(v);
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+}
+
+// IndexedDB is the primary store. Keep a small source-only manifest in
+// localStorage as a recovery path if the browser evicts the database while
+// the installed app is kept on the desktop. Items are intentionally not
+// duplicated here; the feed can rebuild them from these URLs.
+function persistSourceSnapshot() {
+  try {
+    localStorage.setItem(SOURCE_SNAPSHOT_KEY, JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      sources: state.sources.map((source) => Object.assign({}, source)),
+    }));
+  } catch (e) { /* storage may be unavailable or full */ }
+}
+
+function readSourceSnapshot() {
+  try {
+    const raw = localStorage.getItem(SOURCE_SNAPSHOT_KEY);
+    if (!raw) return [];
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.sources)) return [];
+    return snapshot.sources.filter((source) => source && source.feedUrl);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function restoreSourcesFromSnapshot() {
+  const saved = readSourceSnapshot();
+  if (!saved.length) return [];
+  const restored = [];
+  for (const savedSource of saved) {
+    const source = Object.assign({}, savedSource, { lastFetchedAt: null, lastError: null });
+    try {
+      await storePut('sources', source);
+      restored.push(source);
+    } catch (e) { /* skip a malformed source and restore the rest */ }
+  }
+  return restored;
 }
 async function storeDelete(store, key) {
   const tx = state.db.transaction(store, 'readwrite');
@@ -575,6 +616,7 @@ async function saveYouTubeChannelIcon(source, image) {
   source.channelIconUrl = image;
   source.iconUrl = image;
   await storePut('sources', source);
+  persistSourceSnapshot();
   renderAll();
 }
 
@@ -891,6 +933,7 @@ async function addSource(rawUrl) {
   const id = await storePut('sources', source);
   source.id = id;
   state.sources.push(source);
+  persistSourceSnapshot();
   state.fetchingSourceIds.add(source.id);
   renderAll();
   void hydrateSource(source, resolved);
@@ -928,6 +971,7 @@ async function hydrateSource(source, resolved) {
     const parsed = parseFeed(text, source.feedUrl);
     updateSourceMetadata(source, parsed, text);
     await storePut('sources', source);
+    persistSourceSnapshot();
 
     // Item parsing/storage happens independently of the optional Apple
     // Podcasts search, so a slow lookup never delays the feed itself.
@@ -941,11 +985,13 @@ async function hydrateSource(source, resolved) {
       source.itunesId = it.itunesId;
       source.itunesUrl = it.itunesUrl;
       await storePut('sources', source);
+      persistSourceSnapshot();
     }
   } catch (err) {
     if (state.sources.some((s) => s.id === source.id)) {
       source.lastError = err && err.message ? err.message : String(err);
       await storePut('sources', source);
+      persistSourceSnapshot();
     }
   } finally {
     state.fetchingSourceIds.delete(source.id);
@@ -1027,12 +1073,14 @@ async function fetchSource(sourceId, preParsed, preText) {
     source.lastFetchedAt = now;
     source.lastError = null;
     await storePut('sources', source);
+    persistSourceSnapshot();
     if (channelIconPromise) {
       void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
     }
   } catch (err) {
     source.lastError = err && err.message ? err.message : String(err);
     await storePut('sources', source);
+    persistSourceSnapshot();
   }
 }
 
@@ -1069,6 +1117,7 @@ async function removeSource(id) {
   await deleteSourceCascade(id);
   state.sources = state.sources.filter((s) => s.id !== id);
   state.items = state.items.filter((i) => i.sourceId !== id);
+  persistSourceSnapshot();
   renderAll();
 }
 
@@ -1770,8 +1819,12 @@ async function init() {
   }
 
   state.sources = await storeGetAll('sources');
+  if (!state.sources.length) {
+    state.sources = await restoreSourcesFromSnapshot();
+  }
   state.items = await storeGetAll('items');
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
+  persistSourceSnapshot();
 
   initNav();
   initSwipe();
