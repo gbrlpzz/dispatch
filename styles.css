@@ -1,6 +1,5 @@
 /* ============================================================
-   Dispatch — monochrome Apple HIG / Liquid Glass-inspired web PWA,
-   sized for mobile perfection.
+   Dispatch — monochrome Apple HIG, sized for mobile perfection.
 
    Palette: the neutral greys from gabrielepizzi.com / gbrlpzz/index
    (#f5f5f7 field, rgba(0,0,0,.85) ink, rgba(0,0,0,.55) dim) — no
@@ -25,13 +24,6 @@
   --accent: #000000;
   --accent-text: #ffffff;
   --nav-bg: rgba(245, 245, 247, 0.85);
-  /* Web equivalent of Apple's Liquid Glass: adaptive translucent controls
-     over a blurred context, with a stronger frosted fallback for legibility. */
-  --glass-bg: rgba(255, 255, 255, 0.68);
-  --glass-bg-strong: rgba(255, 255, 255, 0.84);
-  --glass-edge: rgba(255, 255, 255, 0.72);
-  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 8px 24px -16px rgba(0, 0, 0, 0.28);
-  --glass-blur: blur(24px) saturate(180%);
   --error: #d70015;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -14px rgba(0, 0, 0, 0.16);
   --radius-card: 16px;
@@ -57,10 +49,6 @@
     --accent: #ffffff;
     --accent-text: #000000;
     --nav-bg: rgba(0, 0, 0, 0.85);
-    --glass-bg: rgba(28, 28, 30, 0.72);
-    --glass-bg-strong: rgba(30, 30, 32, 0.88);
-    --glass-edge: rgba(255, 255, 255, 0.24);
-    --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.32), 0 8px 24px -16px rgba(0, 0, 0, 0.72);
     --error: #ff6961;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -14px rgba(0, 0, 0, 0.6);
   }
@@ -132,21 +120,11 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   justify-content: space-between;
   min-height: calc(44px + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 4px 0;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--nav-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 0.5px solid var(--separator);
-  box-shadow: var(--glass-shadow);
-  isolation: isolate;
   z-index: 10;
-}
-
-#strip {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 0.5px solid var(--separator);
-  isolation: isolate;
 }
 
 .nav-btn {
@@ -302,9 +280,8 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   font-variant-numeric: tabular-nums;
   padding: 3px 7px;
   border-radius: 6px;
-  border: 0.5px solid rgba(255, 255, 255, 0.32);
-  -webkit-backdrop-filter: blur(12px) saturate(150%);
-  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
 }
 
 .card-source-row {
@@ -372,11 +349,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   padding: 0.41rem 0.82rem;             /* 7/14pt */
   min-height: 2rem;
   border-radius: var(--radius-pill);
-  background: var(--glass-bg);
-  border: 0.5px solid var(--glass-edge);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-shadow);
+  background: var(--fill);
   font-size: 0.882rem;
   font-weight: 500;
   letter-spacing: -0.15px;
@@ -435,7 +408,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
 .empty p { font-size: 0.882rem; color: var(--secondary); line-height: 1.35; max-width: 280px; }
 .empty .empty-install { font-size: 0.765rem; color: var(--tertiary); max-width: 280px; }
 .empty .pill { margin-top: 0.82rem; }
-.empty .pill--primary { background: var(--accent); color: var(--accent-text); border-color: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.empty .pill--primary { background: var(--accent); color: var(--accent-text); }
 .empty .pill--primary:active { opacity: 0.8; }
 
 /* ---------------- Toast ---------------- */
@@ -445,17 +418,14 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   left: 50%;
   bottom: calc(30px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
-  background: var(--glass-bg-strong);
-  border: 0.5px solid var(--glass-edge);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-shadow);
-  color: var(--label);
+  background: rgba(30, 30, 32, 0.92);
+  color: #fff;
   font-size: 0.824rem;                  /* 14pt */
   font-weight: 500;
   letter-spacing: -0.1px;
   padding: 10px 18px;
   border-radius: var(--radius-pill);
+  box-shadow: var(--shadow);
   z-index: 60;
   max-width: min(86vw, 400px);
   text-align: center;
@@ -480,10 +450,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   position: fixed;
   left: 0; right: 0; bottom: 0;
   z-index: 50;
-  background: var(--glass-bg-strong);
-  border: 0.5px solid var(--glass-edge);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--bg);
   border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.18);
   transform: translateY(0);
@@ -523,10 +490,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px 8px;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border-bottom: 0.5px solid var(--separator);
+  background: var(--bg);
 }
 .sheet-nav h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.25px; }
 .sheet-nav .nav-btn { min-width: 68px; }
@@ -540,10 +504,7 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   letter-spacing: 0.3px;
 }
 .field {
-  background: var(--glass-bg-strong);
-  border: 0.5px solid var(--glass-edge);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--bg-card);
   border-radius: 12px;
   box-shadow: var(--shadow);
   padding: 4px 14px;
@@ -590,12 +551,10 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
   justify-content: space-between;
   min-height: 44px;
   padding: 0 4px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background: var(--nav-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 0.5px solid var(--separator);
-  box-shadow: var(--glass-shadow);
-  isolation: isolate;
 }
 .screen-nav h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.25px; }
 
@@ -677,17 +636,4 @@ a.card:active { transform: scale(0.98); opacity: 0.85; }
 
 @supports (height: 100dvh) {
   #sheet { max-height: min(88dvh, calc(100dvh - env(safe-area-inset-top))); }
-}
-
-/* Respect the system's Reduce Transparency setting. Liquid Glass is a
-   progressive enhancement; hierarchy and contrast remain intact without it. */
-@media (prefers-reduced-transparency: reduce) {
-  #navbar, #strip, .screen-nav, #sheet, .sheet-nav, #toast, .pill, .field {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  #navbar, #strip, .screen-nav { background: var(--bg); }
-  #sheet, .sheet-nav, .field { background: var(--bg-card); }
-  #toast { background: var(--bg-card); color: var(--label); }
-  .pill { background: var(--fill); }
 }
