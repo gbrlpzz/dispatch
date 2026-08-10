@@ -642,7 +642,11 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
 }
 
 async function upgradeMissingArticleImages() {
-  const articleSources = state.sources.filter((source) => source.type === 'article');
+  const now = Date.now();
+  const articleSources = state.sources.filter((source) => {
+    if (source.type !== 'article' || !source.lastFetchedAt) return false;
+    return now - new Date(source.lastFetchedAt).getTime() <= STALE_OPEN_MS;
+  });
   await Promise.all(articleSources.map(async (source) => {
     const missing = state.items
       .filter((item) => item.sourceId === source.id && !item.imageUrl && item.link)
