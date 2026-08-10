@@ -2,11 +2,6 @@
 
 ![Dispatch preview](preview.png)
 
-The Open Graph card is generated from real mobile captures by the reusable
-the internal preview generator. The committed
-`preview.png` is the stable raster distribution asset; `preview.svg` remains
-beside it as the canonical inspectable source.
-
 **A minimal, private, distraction-free personal feed, arranged by day.**
 
 Dispatch is a small, focused tool in the spirit of *minimal, effective,
@@ -109,38 +104,17 @@ npx serve .
 
 ## Development
 
-The app is plain HTML/CSS/JS — edit and reload. The monochrome home-screen
-icons are generated with `scripts/make_icons.py` (Pillow, macOS SF-style
-font); re-run it after touching the icon motif.
-
-## Preview contract
-
-The shipped `icons/icon-512.png` is the source of truth for the product mark.
-The repeatable Open Graph preview is maintained in
-the internal preview generator: it uses that exact
-home-screen asset and the two exact real mobile captures, exporting both the
-canonical `preview.svg` and the stable `preview.png` derivative. The deterministic
-card contract is `1200 × 630`, with an 80px outer rhythm, 320 × 650
-top-cropped iPhone windows at `x=440` and `x=800`, a 40px gap, 34px
-continuous corners, 5px dark bezels, and black Dynamic Island presentation
-layers. The Dispatch lockup uses weight 800 for `dispatch`, weight 700 for
-the lowercase credit `by gbrlpzz`, and the same 80px top/left rhythm. Never
-recreate the mark with a font or generated artwork; update the preview
-provenance whenever the shipped icon changes. `preview.png` is the stable
-raster asset used by this README, the personal site's project card, and the
-Open Graph/Twitter metadata in `index.html`; `preview.svg` remains beside it
-as the canonical inspectable source.
+The app is plain HTML/CSS/JS — edit and reload. The checked-in monochrome
+home-screen icons are canonical product assets. Do not replace them by
+typesetting the mark with a local fallback font.
 
 ## Branding
 
 - Write the product name as lowercase `dispatch` in the visual lockup.
 - Keep the shipped lowercase `d` icon (`icons/icon-512.png`) as the sole mark;
   do not recreate it with a font or substitute generated artwork.
-- Use `by gbrlpzz` as the compact credit, with the same bold system treatment
-  documented in the preview provenance.
-- Keep the product palette monochrome and let the real interface captures carry
-  their own content; preview framing, margins, bezels, and notches are shared
-  system decisions.
+- Use `by gbrlpzz` as the compact credit.
+- Keep the product palette monochrome, using neutral system greys.
 
 ## Deploy
 
