@@ -59,8 +59,9 @@ Everything runs in your browser and everything stays on your device:
 ## How it works
 
 1. **Adding a source.** Paste the publication, channel, show or feed URL — a
-   Substack publication page, a YouTube channel page (`/channel/…`, `/c/…`,
-   `/user/…` or `@handle`), an Apple Podcasts show page, a podcast RSS URL,
+   Substack publication page or profile link (`substack.com/@handle`), a
+   YouTube channel page (`/channel/…`, `/c/…`, `/user/…` or `@handle`), an
+   Apple Podcasts show page, a podcast RSS URL,
    or any RSS/Atom feed. Dispatch adapts the URL to the underlying feed,
    fetches it, classifies it (text / video / podcast), and stores it locally.
    For podcasts it also
