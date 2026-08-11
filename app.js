@@ -2279,7 +2279,9 @@ function renderDayIncremental() {
       if (!card) {
         insertedCount++;
         card = buildItemCard(item, source);
-        card.classList.add('card--incoming');
+        // Keep the initial network reconciliation quiet. Later background
+        // additions can animate once the launch pass has settled.
+        if (!state.startupRefreshActive) card.classList.add('card--incoming');
       } else if (card.dataset.renderKey !== itemRenderKey(item, source)) {
         const fresh = buildItemCard(item, source);
         card.innerHTML = fresh.innerHTML;
@@ -2339,11 +2341,7 @@ function renderAll(options = {}) {
 
 function dismissBootScreen() {
   const boot = $('#boot-screen');
-  if (!boot) return;
-  requestAnimationFrame(() => {
-    boot.classList.add('boot-screen--hidden');
-    setTimeout(() => boot.remove(), motionDelay(430));
-  });
+  if (boot) boot.remove();
 }
 
 /* ---------------- Rendering: sources screen ---------------- */
