@@ -83,8 +83,8 @@ Everything runs in your browser and everything stays on your device:
    YouTube Videos playlist feed). Each item is bucketed into the *device-local*
    day its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
    The rolling local window keeps the previous seven days and today ready. Card
-   media for that window is warmed through the browser's bounded cache; media
-   binaries are never copied into IndexedDB.
+   media for that window is warmed through the browser's cache with a bounded
+   queue; media binaries are never copied into IndexedDB.
 3. **The calendar.** The home strip shows recent days through today and never
    shows or loads future dates. It extends toward older dates as you scroll.
    Each bubble shows a live day/month date; the day view shows that day's feed
