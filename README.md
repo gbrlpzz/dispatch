@@ -53,9 +53,11 @@ Everything runs in your browser and everything stays on your device:
 - **Manage sources.** A Sources screen lists everything you follow, with
   swipe-to-delete. Removing a source removes its items from the past, the
   present and the future.
-- **Automatic refresh.** Dispatch re-fetches stale sources when you open it,
+- **Reliable refresh.** Dispatch re-fetches stale sources when you open it,
   when the app returns to the foreground, and periodically while it's open.
-  Pull down on any day to refresh immediately.
+  Refreshes are serialized in a small queue, retried with backoff, and keep
+  the last good items visible if a network request fails. Pull down on any day
+  to refresh immediately, or swipe an entry to the right to refresh its source.
 - **Explicit provenance.** Actions identify the destination: “Read on
   Palladium”, “Read on Substack”, “Listen on Substack”, “Watch on YouTube”,
   or “Listen on Apple Podcasts”.
@@ -83,7 +85,9 @@ Everything runs in your browser and everything stays on your device:
 4. **Refresh scheduling.** There is no background daemon — iOS doesn't allow
    web apps to fetch in the background. Instead Dispatch refreshes whenever
    you open it or bring it to the foreground if any source is older than 12
-   hours, and re-checks every 30 minutes while it's open.
+   hours, and re-checks every 30 minutes while it's open. A failed source is
+   retried automatically with short backoff, while other sources continue
+   through a bounded queue.
 
 ## Run locally
 
