@@ -142,7 +142,7 @@ const state = {
   dayLoadKey: null,
   dayLoadToken: 0,
   // A source can be touched by the initial hydrator, an automatic refresh,
-  // or a card recovery gesture. Keep both the single fetch and the retrying
+  // or a source-list action. Keep both the single fetch and the retrying
   // refresh operation deduplicated so those paths never race each other.
   sourceFetchPromises: new Map(),
   sourceRefreshPromises: new Map(),
@@ -170,6 +170,25 @@ const MEDIA_PRELOAD_DELAY_MS = 120;
 
 const sheetEl = () => $('#sheet');
 const sourcesScreenEl = () => $('#sources-screen');
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function motionDelay(ms) {
+  return prefersReducedMotion() ? 0 : ms;
+}
+
+function syncAppInert() {
+  const app = $('#app');
+  if (!app) return;
+  const blocked = !sheetEl().hidden || !sourcesScreenEl().hidden;
+  app.inert = blocked;
+  if (blocked) app.setAttribute('inert', '');
+  else app.removeAttribute('inert');
+}
 
 /* ---------------- IndexedDB ---------------- */
 
@@ -1899,7 +1918,7 @@ function scrollStripTo(dayKeyVal, smooth) {
 function sourceBadge(source) {
   const letter = source && source.title ? esc(source.title.trim()[0].toUpperCase()) : '?';
   if (source && source.iconUrl) {
-    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></span>';
+    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()"></span>';
   }
   return '<span class="source-badge" aria-hidden="true">' + letter + '</span>';
 }
@@ -1942,119 +1961,6 @@ function pillLabel(item, source) {
   return destination ? 'Read on ' + destination : 'Read';
 }
 
-function initCardRefreshGesture(wrapper, card, action, source) {
-  if (!source || !source.id) return;
-  let startX = 0, startY = 0, axis = null, active = false, dx = 0;
-  let suppressClick = false;
-
-  const reset = () => {
-    wrapper.dataset.refreshGesture = '';
-    card.style.transition = '';
-    card.style.transform = '';
-    action.style.opacity = '';
-    dx = 0;
-  };
-
-  const down = (x, y, pointerId) => {
-    if (state.fetching) return;
-    startX = x;
-    startY = y;
-    axis = null;
-    active = true;
-    dx = 0;
-    if (pointerId != null) {
-      try { card.setPointerCapture(pointerId); } catch (e) { /* synthetic pointer */ }
-    }
-  };
-
-  const move = (x, y, event) => {
-    if (!active) return;
-    const mx = x - startX;
-    const my = y - startY;
-    if (!axis) {
-      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
-      axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
-      if (axis === 'y' || mx < 0) {
-        active = false;
-        return;
-      }
-    }
-    if (axis !== 'x') return;
-    dx = mx;
-    if (mx <= 0) {
-      wrapper.dataset.refreshGesture = '';
-      card.style.transform = 'translateX(0)';
-      action.style.opacity = '0';
-      return;
-    }
-
-    wrapper.dataset.refreshGesture = '1';
-    const reveal = Math.min(86, mx * 0.68);
-    const progress = Math.min(1, Math.max(0, (reveal - 2) / 52));
-    card.style.transition = 'none';
-    card.style.transform = 'translateX(' + reveal + 'px)';
-    action.style.opacity = String(progress);
-    if (event && event.cancelable) event.preventDefault();
-  };
-
-  const settle = (x) => {
-    if (!active) return;
-    active = false;
-    if (axis === 'x') dx = x - startX;
-    const shouldRefresh = axis === 'x' && dx >= 58;
-    if (!shouldRefresh) {
-      reset();
-      return;
-    }
-
-    suppressClick = true;
-    card.style.transition = 'transform 0.24s var(--ease)';
-    card.style.transform = 'translateX(0)';
-    action.style.opacity = '0';
-    wrapper.classList.add('card-swipe--refreshing');
-    void refreshOneSource(source.id)
-      .catch(() => {})
-      .finally(() => {
-        wrapper.classList.remove('card-swipe--refreshing');
-        reset();
-      });
-  };
-
-  card.addEventListener('touchstart', (event) => {
-    const t = event.touches && event.touches[0];
-    if (t) down(t.clientX, t.clientY, null);
-  }, { passive: true });
-  card.addEventListener('touchmove', (event) => {
-    const t = event.touches && event.touches[0];
-    if (t) move(t.clientX, t.clientY, event);
-  }, { passive: false });
-  card.addEventListener('touchend', (event) => {
-    const t = event.changedTouches && event.changedTouches[0];
-    settle(t ? t.clientX : startX);
-  });
-  card.addEventListener('touchcancel', () => { active = false; reset(); });
-
-  card.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'touch') return;
-    down(event.clientX, event.clientY, event.pointerId);
-  });
-  card.addEventListener('pointermove', (event) => {
-    if (event.pointerType === 'touch') return;
-    move(event.clientX, event.clientY, event);
-  });
-  card.addEventListener('pointerup', (event) => {
-    if (event.pointerType === 'touch') return;
-    settle(event.clientX);
-  });
-  card.addEventListener('pointercancel', () => { active = false; reset(); });
-  card.addEventListener('click', (event) => {
-    if (!suppressClick) return;
-    suppressClick = false;
-    event.preventDefault();
-    event.stopPropagation();
-  });
-}
-
 function buildItemCard(item, source) {
   const card = el('a', 'card');
   card.href = cardTarget(item, source) || '#';
@@ -2068,19 +1974,19 @@ function buildItemCard(item, source) {
   let media = '';
   if (item.kind === 'youtube' && item.imageUrl) {
     media = '<div class="card-media">' +
-      '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       (item.duration ? '<span class="duration-badge mono-glyph">' + fmtDuration(item.duration) + '</span>' : '') +
       '</div>';
   } else if ((item.kind === 'article' || substack) && editorialImage) {
     media = '<div class="card-media">' +
-      '<img src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       '</div>';
   }
 
   let body;
   if (isAudioItem(item) && !substack) {
     const art = podcastImage
-      ? '<img src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
+      ? '<img class="media-reveal" src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
       : KIND_META.podcast.icon;
     body =
       '<div class="pod-row">' +
@@ -2109,14 +2015,7 @@ function buildItemCard(item, source) {
     body +
     '<span class="pill"><span>' + pillLabel(item, source) + '</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
 
-  const wrapper = el('div', 'card-swipe');
-  const action = el('div', 'card-swipe__action');
-  action.setAttribute('aria-hidden', 'true');
-  action.innerHTML = '<span class="card-swipe__icon">' + ICONS.refresh + '</span>';
-  wrapper.appendChild(action);
-  wrapper.appendChild(card);
-  initCardRefreshGesture(wrapper, card, action, source);
-  return wrapper;
+  return card;
 }
 
 function buildEmpty(day) {
@@ -2197,7 +2096,7 @@ function dismissBootScreen() {
   if (!boot) return;
   requestAnimationFrame(() => {
     boot.classList.add('boot-screen--hidden');
-    setTimeout(() => boot.remove(), 260);
+    setTimeout(() => boot.remove(), motionDelay(430));
   });
 }
 
@@ -2232,50 +2131,127 @@ function buildSourceRow(source, onDelete) {
       '<div class="s-sub' + (source.lastError ? ' s-sub--error' : '') + '">' + esc(sourceSub(source)) + '</div>' +
     '</div>' +
     '<span class="s-chevron" aria-hidden="true">' + ICONS.chevron + '</span>' +
-    '<button class="s-delete" aria-label="Delete ' + esc(source.title) + '">Delete</button>';
+    '<button class="s-refresh" type="button" aria-label="Refresh ' + esc(source.title) + '">' +
+      '<span class="s-refresh__icon" aria-hidden="true">' + ICONS.refresh + '</span>' +
+      '<span>Refresh</span>' +
+    '</button>' +
+    '<button class="s-delete" type="button" aria-label="Delete ' + esc(source.title) + '">Delete</button>';
+
+  // Swipe left for Refresh and right for Delete.
+  const actionWidth = 92;
+  const revealThreshold = 46;
+  let startX = null, startY = null, curDx = 0;
+  let openDirection = 0, dragging = false, axis = null, suppressClick = false;
+  const isActionTarget = (target) => !!(target && target.closest && target.closest('.s-delete, .s-refresh'));
+
+  const resetOpenState = () => {
+    openDirection = 0;
+    row.style.transform = 'translateX(0)';
+  };
+  const revealAction = (direction) => {
+    openDirection = direction;
+    row.style.transition = '';
+    row.style.transform = 'translateX(' + (direction * actionWidth) + 'px)';
+  };
+
   const delBtn = row.querySelector('.s-delete');
+  delBtn.addEventListener('focus', () => revealAction(1));
   delBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    resetOpenState();
     removeSource(source.id).then(() => toast('Removed “' + source.title + '”'));
   });
 
-  // Swipe to reveal delete (horizontal drag on the row; touch + mouse)
-  let startX = null, curDx = 0, open = false, dragging = false;
-  const down = (x, pid) => {
+  const refreshBtn = row.querySelector('.s-refresh');
+  refreshBtn.addEventListener('focus', () => revealAction(-1));
+  refreshBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    resetOpenState();
+    refreshBtn.setAttribute('aria-busy', 'true');
+    refreshBtn.classList.add('s-refresh--busy');
+    void refreshOneSource(source.id)
+      .catch(() => {})
+      .finally(() => {
+        refreshBtn.removeAttribute('aria-busy');
+        refreshBtn.classList.remove('s-refresh--busy');
+      });
+  });
+
+  const down = (x, y, pid) => {
     if (dragging) return;
     startX = x;
-    curDx = open ? -92 : 0;
+    startY = y;
+    axis = null;
+    curDx = openDirection * actionWidth;
     dragging = true;
     if (pid != null) { try { row.setPointerCapture(pid); } catch (e) { /* synthetic */ } }
   };
-  const move = (x) => {
-    if (!dragging || startX == null) return;
+  const move = (x, y) => {
+    if (!dragging || startX == null || startY == null) return;
     const dx = x - startX;
-    const next = Math.max(-92, Math.min(0, curDx + dx));
+    const dy = y - startY;
+    if (!axis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (axis === 'y') {
+        dragging = false;
+        return;
+      }
+    }
+    if (axis !== 'x') return;
+    const next = Math.max(-actionWidth, Math.min(actionWidth, curDx + dx));
     row.style.transition = 'none';
     row.style.transform = 'translateX(' + next + 'px)';
   };
   const settle = (x) => {
     if (!dragging) return;
     dragging = false;
-    const dx = x - startX;
-    open = (curDx + dx) < -46;
+    if (axis === 'x') {
+      const finalX = typeof x === 'number' ? x : startX;
+      const finalDx = curDx + finalX - startX;
+      if (finalDx <= -revealThreshold) openDirection = -1;
+      else if (finalDx >= revealThreshold) openDirection = 1;
+      else openDirection = 0;
+      suppressClick = true;
+    }
     row.style.transition = '';
-    row.style.transform = open ? 'translateX(-92px)' : 'translateX(0)';
+    row.style.transform = 'translateX(' + (openDirection * actionWidth) + 'px)';
   };
-  row.addEventListener('touchstart', (e) => { const t = e.touches && e.touches[0]; if (t) down(t.clientX, null); }, { passive: true });
-  row.addEventListener('touchmove', (e) => { const t = e.touches && e.touches[0]; if (t) move(t.clientX); }, { passive: true });
-  row.addEventListener('touchend', (e) => { const t = e.changedTouches && e.changedTouches[0]; settle(t ? t.clientX : startX); });
-  row.addEventListener('pointerdown', (e) => { if (e.target.closest('.s-delete')) return; down(e.clientX, e.pointerId); });
-  row.addEventListener('pointermove', (e) => move(e.clientX));
+
+  row.addEventListener('touchstart', (e) => {
+    if (isActionTarget(e.target)) return;
+    const t = e.touches && e.touches[0];
+    if (t) down(t.clientX, t.clientY, null);
+  }, { passive: true });
+  row.addEventListener('touchmove', (e) => {
+    const t = e.touches && e.touches[0];
+    if (t) move(t.clientX, t.clientY);
+  }, { passive: true });
+  row.addEventListener('touchend', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    settle(t ? t.clientX : startX);
+  });
+  row.addEventListener('pointerdown', (e) => {
+    if (isActionTarget(e.target)) return;
+    down(e.clientX, e.clientY, e.pointerId);
+  });
+  row.addEventListener('pointermove', (e) => move(e.clientX, e.clientY));
   row.addEventListener('pointerup', (e) => settle(e.clientX));
   row.addEventListener('pointercancel', () => settle(startX));
   row.addEventListener('click', (e) => {
-    if (open) { open = false; row.style.transform = 'translateX(0)'; e.stopPropagation(); }
+    if (suppressClick) {
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (openDirection) {
+      resetOpenState();
+      e.stopPropagation();
+    }
   });
   return row;
 }
-
 function renderSourcesList() {
   const list = $('#sources-list');
   const groups = el('div', 'source-group');
@@ -2299,6 +2275,8 @@ function renderSourcesList() {
 
 let sheetMode = null;
 let sheetOpener = null;
+let sourcesOpener = null;
+let sourcesFocusFrame = null;
 
 function openSheet(mode) {
   sheetMode = mode;
@@ -2306,6 +2284,7 @@ function openSheet(mode) {
   $('#backdrop').hidden = false;
   const sheet = sheetEl();
   sheet.hidden = false;
+  syncAppInert();
   requestAnimationFrame(() => sheet.classList.add('sheet-open'));
   buildSheet(mode);
 }
@@ -2317,9 +2296,34 @@ function closeSheet() {
   setTimeout(() => {
     sheet.hidden = true;
     sheetMode = null;
+    syncAppInert();
     if (sheetOpener && document.contains(sheetOpener)) sheetOpener.focus();
     sheetOpener = null;
-  }, 380);
+  }, motionDelay(460));
+}
+
+function openSourcesScreen() {
+  sourcesOpener = document.activeElement;
+  const screen = sourcesScreenEl();
+  screen.hidden = false;
+  syncAppInert();
+  if (sourcesFocusFrame) cancelAnimationFrame(sourcesFocusFrame);
+  sourcesFocusFrame = requestAnimationFrame(() => {
+    sourcesFocusFrame = null;
+    if (!screen.hidden) $('#sources-done').focus();
+  });
+}
+
+function closeSourcesScreen() {
+  const screen = sourcesScreenEl();
+  screen.hidden = true;
+  syncAppInert();
+  if (sourcesFocusFrame) {
+    cancelAnimationFrame(sourcesFocusFrame);
+    sourcesFocusFrame = null;
+  }
+  if (sourcesOpener && document.contains(sourcesOpener)) sourcesOpener.focus();
+  sourcesOpener = null;
 }
 
 function buildSheet(mode) {
@@ -2333,11 +2337,14 @@ function sheetNav(title, actionLabel, onAction, actionEnabled) {
   nav.innerHTML =
     '<button class="nav-btn" data-sheet-cancel>Cancel</button>' +
     '<h2>' + esc(title) + '</h2>' +
-    '<button class="nav-btn nav-btn--icon nav-btn--disabled" data-sheet-action>' + esc(actionLabel) + '</button>';
+    '<button class="nav-btn nav-btn--icon nav-btn--disabled" data-sheet-action disabled>' + esc(actionLabel) + '</button>';
   nav.querySelector('[data-sheet-cancel]').addEventListener('click', closeSheet);
   const action = nav.querySelector('[data-sheet-action]');
   action.addEventListener('click', onAction);
-  if (actionEnabled) action.classList.remove('nav-btn--disabled');
+  if (actionEnabled) {
+    action.disabled = false;
+    action.classList.remove('nav-btn--disabled');
+  }
   return nav;
 }
 
@@ -2346,6 +2353,7 @@ function fieldRow(icon, placeholder, inputAttrs) {
   wrap.innerHTML = '<span aria-hidden="true">' + icon + '</span>';
   const input = document.createElement('input');
   input.placeholder = placeholder;
+  input.setAttribute('aria-label', placeholder);
   input.autocapitalize = 'off';
   input.autocorrect = 'off';
   input.spellcheck = false;
@@ -2367,6 +2375,7 @@ function buildSourceSheet() {
     const url = urlRow.input.value.trim();
     if (!url || btn.dataset.busy) return;
     btn.dataset.busy = '1';
+    btn.disabled = true;
     btn.textContent = 'Adding…';
     btn.classList.add('nav-btn--disabled');
     urlRow.input.disabled = true;
@@ -2376,6 +2385,7 @@ function buildSourceSheet() {
       toast('Source added');
     } catch (err) {
       btn.dataset.busy = '';
+      btn.disabled = false;
       btn.textContent = 'Add';
       btn.classList.remove('nav-btn--disabled');
       urlRow.input.disabled = false;
@@ -2391,7 +2401,9 @@ function buildSourceSheet() {
   const action = nav.querySelector('[data-sheet-action]');
   const updateAction = () => {
     const hasUrl = urlRow.input.value.trim().length >= 8;
-    action.classList.toggle('nav-btn--disabled', !hasUrl || !!action.dataset.busy);
+    const disabled = !hasUrl || !!action.dataset.busy;
+    action.disabled = disabled;
+    action.classList.toggle('nav-btn--disabled', disabled);
   };
   urlRow.input.addEventListener('input', updateAction);
   urlRow.input.addEventListener('change', updateAction);
@@ -2462,13 +2474,17 @@ function goToDay(offset) {
   const w = $('#pager').clientWidth || window.innerWidth;
   const view = $('#dayview');
   if (view.dataset.swiping === '1') return;
-  view.style.transition = 'transform 0.26s var(--ease)';
+  if (prefersReducedMotion()) {
+    setDay(addDays(state.day, dir));
+    return;
+  }
+  view.style.transition = 'transform 0.38s var(--ease)';
   view.style.transform = 'translateX(' + (-dir * w) + 'px)';
   setTimeout(() => {
     setDay(addDays(state.day, dir));
     view.style.transition = 'none';
     view.style.transform = 'translateX(0)';
-  }, 270);
+  }, 390);
 }
 
 function initSwipe() {
@@ -2483,13 +2499,6 @@ function initSwipe() {
   };
   const onMove = (x, y, e) => {
     if (!active) return;
-    const cardGesture = e && e.target && e.target.closest && e.target.closest('.card-swipe');
-    if (cardGesture && cardGesture.dataset.refreshGesture === '1') {
-      active = false;
-      view.style.transition = 'none';
-      view.style.transform = 'translateX(0)';
-      return;
-    }
     const mx = x - startX;
     const my = y - startY;
     if (!axis) {
@@ -2510,17 +2519,21 @@ function initSwipe() {
     const threshold = Math.min(90, w * 0.22);
     if (Math.abs(dx) > threshold) {
       const dir = dx < 0 ? 1 : -1;
+      if (prefersReducedMotion()) {
+        setDay(addDays(state.day, dir));
+        return;
+      }
       view.dataset.swiping = '1';
-      view.style.transition = 'transform 0.24s var(--ease)';
+      view.style.transition = 'transform 0.38s var(--ease)';
       view.style.transform = 'translateX(' + (-dir * w) + 'px)';
       setTimeout(() => {
         setDay(addDays(state.day, dir));
         view.style.transition = 'none';
         view.style.transform = 'translateX(0)';
         view.dataset.swiping = '0';
-      }, 250);
+      }, 390);
     } else {
-      view.style.transition = 'transform 0.2s var(--ease)';
+      view.style.transition = 'transform 0.32s var(--ease)';
       view.style.transform = 'translateX(0)';
     }
   };
@@ -2577,7 +2590,6 @@ function initPullToRefresh() {
   };
 
   view.addEventListener('touchstart', (e) => {
-    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     const t = e.touches && e.touches[0];
     if (t) onDown(t.clientY);
   }, { passive: true });
@@ -2590,7 +2602,6 @@ function initPullToRefresh() {
 
   view.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') return;
-    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     onDown(e.clientY);
   });
   view.addEventListener('pointermove', (e) => {
@@ -2681,11 +2692,50 @@ function initStripSpotlight() {
   }
 }
 
+function focusableWithin(root) {
+  return Array.from(root.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter((node) => !node.hidden && !node.closest('[hidden]') && node.getClientRects().length);
+}
+
+function trapOverlayFocus(event) {
+  if (event.key !== 'Tab') return false;
+  const overlay = !sheetEl().hidden
+    ? sheetEl()
+    : (!sourcesScreenEl().hidden ? sourcesScreenEl() : null);
+  if (!overlay) return false;
+
+  const focusable = focusableWithin(overlay);
+  if (!focusable.length) {
+    event.preventDefault();
+    return true;
+  }
+  const active = document.activeElement;
+  if (!overlay.contains(active)) {
+    event.preventDefault();
+    focusable[0].focus();
+    return true;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
 function initNav() {
   $('#today-btn').addEventListener('click', () => setDay(todayMidnight()));
   $('#add-btn').addEventListener('click', () => openSheet('source'));
-  $('#sources-btn').addEventListener('click', () => { $('#sources-screen').hidden = false; });
-  $('#sources-done').addEventListener('click', () => { $('#sources-screen').hidden = true; });
+  $('#sources-btn').addEventListener('click', openSourcesScreen);
+  $('#sources-done').addEventListener('click', closeSourcesScreen);
 
   $('#strip').addEventListener('click', (e) => {
     const b = e.target.closest('.bubble');
@@ -2764,12 +2814,13 @@ async function init() {
     upgradeYouTubeSources(),
   ]).catch(() => {});
 
-  // keyboard: day navigation, ESC to close overlays
+  // Keyboard: day navigation, modal focus management, and ESC to close overlays.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!sourcesScreenEl().hidden) { sourcesScreenEl().hidden = true; return; }
       if (!sheetEl().hidden) { closeSheet(); return; }
+      if (!sourcesScreenEl().hidden) { closeSourcesScreen(); return; }
     }
+    if (trapOverlayFocus(e)) return;
     if (!sheetEl().hidden || !sourcesScreenEl().hidden) return;
     if (e.key === 'ArrowLeft') goToDay(-1);
     else if (e.key === 'ArrowRight') goToDay(1);
