@@ -142,7 +142,7 @@ const state = {
   dayLoadKey: null,
   dayLoadToken: 0,
   // A source can be touched by the initial hydrator, an automatic refresh,
-  // or a card recovery gesture. Keep both the single fetch and the retrying
+  // or a source-list action. Keep both the single fetch and the retrying
   // refresh operation deduplicated so those paths never race each other.
   sourceFetchPromises: new Map(),
   sourceRefreshPromises: new Map(),
@@ -1899,7 +1899,7 @@ function scrollStripTo(dayKeyVal, smooth) {
 function sourceBadge(source) {
   const letter = source && source.title ? esc(source.title.trim()[0].toUpperCase()) : '?';
   if (source && source.iconUrl) {
-    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()"></span>';
+    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()"></span>';
   }
   return '<span class="source-badge" aria-hidden="true">' + letter + '</span>';
 }
@@ -1942,119 +1942,6 @@ function pillLabel(item, source) {
   return destination ? 'Read on ' + destination : 'Read';
 }
 
-function initCardRefreshGesture(wrapper, card, action, source) {
-  if (!source || !source.id) return;
-  let startX = 0, startY = 0, axis = null, active = false, dx = 0;
-  let suppressClick = false;
-
-  const reset = () => {
-    wrapper.dataset.refreshGesture = '';
-    card.style.transition = '';
-    card.style.transform = '';
-    action.style.opacity = '';
-    dx = 0;
-  };
-
-  const down = (x, y, pointerId) => {
-    if (state.fetching) return;
-    startX = x;
-    startY = y;
-    axis = null;
-    active = true;
-    dx = 0;
-    if (pointerId != null) {
-      try { card.setPointerCapture(pointerId); } catch (e) { /* synthetic pointer */ }
-    }
-  };
-
-  const move = (x, y, event) => {
-    if (!active) return;
-    const mx = x - startX;
-    const my = y - startY;
-    if (!axis) {
-      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
-      axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
-      if (axis === 'y' || mx < 0) {
-        active = false;
-        return;
-      }
-    }
-    if (axis !== 'x') return;
-    dx = mx;
-    if (mx <= 0) {
-      wrapper.dataset.refreshGesture = '';
-      card.style.transform = 'translateX(0)';
-      action.style.opacity = '0';
-      return;
-    }
-
-    wrapper.dataset.refreshGesture = '1';
-    const reveal = Math.min(86, mx * 0.68);
-    const progress = Math.min(1, Math.max(0, (reveal - 2) / 52));
-    card.style.transition = 'none';
-    card.style.transform = 'translateX(' + reveal + 'px)';
-    action.style.opacity = String(progress);
-    if (event && event.cancelable) event.preventDefault();
-  };
-
-  const settle = (x) => {
-    if (!active) return;
-    active = false;
-    if (axis === 'x') dx = x - startX;
-    const shouldRefresh = axis === 'x' && dx >= 58;
-    if (!shouldRefresh) {
-      reset();
-      return;
-    }
-
-    suppressClick = true;
-    card.style.transition = 'transform 0.24s var(--ease)';
-    card.style.transform = 'translateX(0)';
-    action.style.opacity = '0';
-    wrapper.classList.add('card-swipe--refreshing');
-    void refreshOneSource(source.id)
-      .catch(() => {})
-      .finally(() => {
-        wrapper.classList.remove('card-swipe--refreshing');
-        reset();
-      });
-  };
-
-  card.addEventListener('touchstart', (event) => {
-    const t = event.touches && event.touches[0];
-    if (t) down(t.clientX, t.clientY, null);
-  }, { passive: true });
-  card.addEventListener('touchmove', (event) => {
-    const t = event.touches && event.touches[0];
-    if (t) move(t.clientX, t.clientY, event);
-  }, { passive: false });
-  card.addEventListener('touchend', (event) => {
-    const t = event.changedTouches && event.changedTouches[0];
-    settle(t ? t.clientX : startX);
-  });
-  card.addEventListener('touchcancel', () => { active = false; reset(); });
-
-  card.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'touch') return;
-    down(event.clientX, event.clientY, event.pointerId);
-  });
-  card.addEventListener('pointermove', (event) => {
-    if (event.pointerType === 'touch') return;
-    move(event.clientX, event.clientY, event);
-  });
-  card.addEventListener('pointerup', (event) => {
-    if (event.pointerType === 'touch') return;
-    settle(event.clientX);
-  });
-  card.addEventListener('pointercancel', () => { active = false; reset(); });
-  card.addEventListener('click', (event) => {
-    if (!suppressClick) return;
-    suppressClick = false;
-    event.preventDefault();
-    event.stopPropagation();
-  });
-}
-
 function buildItemCard(item, source) {
   const card = el('a', 'card');
   card.href = cardTarget(item, source) || '#';
@@ -2068,19 +1955,19 @@ function buildItemCard(item, source) {
   let media = '';
   if (item.kind === 'youtube' && item.imageUrl) {
     media = '<div class="card-media">' +
-      '<img src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       (item.duration ? '<span class="duration-badge mono-glyph">' + fmtDuration(item.duration) + '</span>' : '') +
       '</div>';
   } else if ((item.kind === 'article' || substack) && editorialImage) {
     media = '<div class="card-media">' +
-      '<img src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       '</div>';
   }
 
   let body;
   if (isAudioItem(item) && !substack) {
     const art = podcastImage
-      ? '<img src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
+      ? '<img class="media-reveal" src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
       : KIND_META.podcast.icon;
     body =
       '<div class="pod-row">' +
@@ -2109,14 +1996,7 @@ function buildItemCard(item, source) {
     body +
     '<span class="pill"><span>' + pillLabel(item, source) + '</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
 
-  const wrapper = el('div', 'card-swipe');
-  const action = el('div', 'card-swipe__action');
-  action.setAttribute('aria-hidden', 'true');
-  action.innerHTML = '<span class="card-swipe__icon">' + ICONS.refresh + '</span>';
-  wrapper.appendChild(action);
-  wrapper.appendChild(card);
-  initCardRefreshGesture(wrapper, card, action, source);
-  return wrapper;
+  return card;
 }
 
 function buildEmpty(day) {
@@ -2197,7 +2077,7 @@ function dismissBootScreen() {
   if (!boot) return;
   requestAnimationFrame(() => {
     boot.classList.add('boot-screen--hidden');
-    setTimeout(() => boot.remove(), 260);
+    setTimeout(() => boot.remove(), 430);
   });
 }
 
@@ -2223,7 +2103,7 @@ function buildSourceRow(source, onDelete) {
   row.dataset.id = source.id;
   const letter = esc(source.title.trim()[0].toUpperCase() || '?');
   const icon = source.iconUrl
-    ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">'
+    ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()">'
     : letter;
   row.innerHTML =
     '<div class="source-icon" aria-hidden="true">' + icon + '</div>' +
@@ -2232,50 +2112,102 @@ function buildSourceRow(source, onDelete) {
       '<div class="s-sub' + (source.lastError ? ' s-sub--error' : '') + '">' + esc(sourceSub(source)) + '</div>' +
     '</div>' +
     '<span class="s-chevron" aria-hidden="true">' + ICONS.chevron + '</span>' +
-    '<button class="s-delete" aria-label="Delete ' + esc(source.title) + '">Delete</button>';
+    '<button class="s-refresh" type="button" aria-label="Refresh ' + esc(source.title) + '">' +
+      '<span class="s-refresh__icon" aria-hidden="true">' + ICONS.refresh + '</span>' +
+      '<span>Refresh</span>' +
+    '</button>' +
+    '<button class="s-delete" type="button" aria-label="Delete ' + esc(source.title) + '">Delete</button>';
+
   const delBtn = row.querySelector('.s-delete');
   delBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     removeSource(source.id).then(() => toast('Removed “' + source.title + '”'));
   });
 
-  // Swipe to reveal delete (horizontal drag on the row; touch + mouse)
-  let startX = null, curDx = 0, open = false, dragging = false;
-  const down = (x, pid) => {
+  // Swipe left to reveal source actions (touch + mouse).
+  const actionWidth = 184;
+  const revealThreshold = 92;
+  let startX = null, startY = null, curDx = 0, open = false, dragging = false, axis = null;
+  const isActionTarget = (target) => !!(target && target.closest && target.closest('.s-delete, .s-refresh'));
+
+  const refreshBtn = row.querySelector('.s-refresh');
+  refreshBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    open = false;
+    row.style.transform = 'translateX(0)';
+    refreshBtn.classList.add('s-refresh--busy');
+    void refreshOneSource(source.id)
+      .catch(() => {})
+      .finally(() => refreshBtn.classList.remove('s-refresh--busy'));
+  });
+
+  const down = (x, y, pid) => {
     if (dragging) return;
     startX = x;
-    curDx = open ? -92 : 0;
+    startY = y;
+    axis = null;
+    curDx = open ? -actionWidth : 0;
     dragging = true;
     if (pid != null) { try { row.setPointerCapture(pid); } catch (e) { /* synthetic */ } }
   };
-  const move = (x) => {
-    if (!dragging || startX == null) return;
+  const move = (x, y) => {
+    if (!dragging || startX == null || startY == null) return;
     const dx = x - startX;
-    const next = Math.max(-92, Math.min(0, curDx + dx));
+    const dy = y - startY;
+    if (!axis) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (axis === 'y') {
+        dragging = false;
+        return;
+      }
+    }
+    if (axis !== 'x') return;
+    const next = Math.max(-actionWidth, Math.min(0, curDx + dx));
     row.style.transition = 'none';
     row.style.transform = 'translateX(' + next + 'px)';
   };
   const settle = (x) => {
     if (!dragging) return;
     dragging = false;
-    const dx = x - startX;
-    open = (curDx + dx) < -46;
+    if (axis === 'x') {
+      const finalX = typeof x === 'number' ? x : startX;
+      const dx = finalX - startX;
+      open = (curDx + dx) < -revealThreshold;
+    }
     row.style.transition = '';
-    row.style.transform = open ? 'translateX(-92px)' : 'translateX(0)';
+    row.style.transform = open ? 'translateX(-' + actionWidth + 'px)' : 'translateX(0)';
   };
-  row.addEventListener('touchstart', (e) => { const t = e.touches && e.touches[0]; if (t) down(t.clientX, null); }, { passive: true });
-  row.addEventListener('touchmove', (e) => { const t = e.touches && e.touches[0]; if (t) move(t.clientX); }, { passive: true });
-  row.addEventListener('touchend', (e) => { const t = e.changedTouches && e.changedTouches[0]; settle(t ? t.clientX : startX); });
-  row.addEventListener('pointerdown', (e) => { if (e.target.closest('.s-delete')) return; down(e.clientX, e.pointerId); });
-  row.addEventListener('pointermove', (e) => move(e.clientX));
+
+  row.addEventListener('touchstart', (e) => {
+    if (isActionTarget(e.target)) return;
+    const t = e.touches && e.touches[0];
+    if (t) down(t.clientX, t.clientY, null);
+  }, { passive: true });
+  row.addEventListener('touchmove', (e) => {
+    const t = e.touches && e.touches[0];
+    if (t) move(t.clientX, t.clientY);
+  }, { passive: true });
+  row.addEventListener('touchend', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    settle(t ? t.clientX : startX);
+  });
+  row.addEventListener('pointerdown', (e) => {
+    if (isActionTarget(e.target)) return;
+    down(e.clientX, e.clientY, e.pointerId);
+  });
+  row.addEventListener('pointermove', (e) => move(e.clientX, e.clientY));
   row.addEventListener('pointerup', (e) => settle(e.clientX));
   row.addEventListener('pointercancel', () => settle(startX));
   row.addEventListener('click', (e) => {
-    if (open) { open = false; row.style.transform = 'translateX(0)'; e.stopPropagation(); }
+    if (open) {
+      open = false;
+      row.style.transform = 'translateX(0)';
+      e.stopPropagation();
+    }
   });
   return row;
 }
-
 function renderSourcesList() {
   const list = $('#sources-list');
   const groups = el('div', 'source-group');
@@ -2319,7 +2251,7 @@ function closeSheet() {
     sheetMode = null;
     if (sheetOpener && document.contains(sheetOpener)) sheetOpener.focus();
     sheetOpener = null;
-  }, 380);
+  }, 460);
 }
 
 function buildSheet(mode) {
@@ -2462,13 +2394,13 @@ function goToDay(offset) {
   const w = $('#pager').clientWidth || window.innerWidth;
   const view = $('#dayview');
   if (view.dataset.swiping === '1') return;
-  view.style.transition = 'transform 0.26s var(--ease)';
+  view.style.transition = 'transform 0.38s var(--ease)';
   view.style.transform = 'translateX(' + (-dir * w) + 'px)';
   setTimeout(() => {
     setDay(addDays(state.day, dir));
     view.style.transition = 'none';
     view.style.transform = 'translateX(0)';
-  }, 270);
+  }, 390);
 }
 
 function initSwipe() {
@@ -2483,13 +2415,6 @@ function initSwipe() {
   };
   const onMove = (x, y, e) => {
     if (!active) return;
-    const cardGesture = e && e.target && e.target.closest && e.target.closest('.card-swipe');
-    if (cardGesture && cardGesture.dataset.refreshGesture === '1') {
-      active = false;
-      view.style.transition = 'none';
-      view.style.transform = 'translateX(0)';
-      return;
-    }
     const mx = x - startX;
     const my = y - startY;
     if (!axis) {
@@ -2511,16 +2436,16 @@ function initSwipe() {
     if (Math.abs(dx) > threshold) {
       const dir = dx < 0 ? 1 : -1;
       view.dataset.swiping = '1';
-      view.style.transition = 'transform 0.24s var(--ease)';
+      view.style.transition = 'transform 0.38s var(--ease)';
       view.style.transform = 'translateX(' + (-dir * w) + 'px)';
       setTimeout(() => {
         setDay(addDays(state.day, dir));
         view.style.transition = 'none';
         view.style.transform = 'translateX(0)';
         view.dataset.swiping = '0';
-      }, 250);
+      }, 390);
     } else {
-      view.style.transition = 'transform 0.2s var(--ease)';
+      view.style.transition = 'transform 0.32s var(--ease)';
       view.style.transform = 'translateX(0)';
     }
   };
@@ -2577,7 +2502,6 @@ function initPullToRefresh() {
   };
 
   view.addEventListener('touchstart', (e) => {
-    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     const t = e.touches && e.touches[0];
     if (t) onDown(t.clientY);
   }, { passive: true });
@@ -2590,7 +2514,6 @@ function initPullToRefresh() {
 
   view.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') return;
-    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     onDown(e.clientY);
   });
   view.addEventListener('pointermove', (e) => {
