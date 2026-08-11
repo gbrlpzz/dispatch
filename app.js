@@ -395,7 +395,13 @@ async function fetchWithTimeout(url, opts, ms) {
   finally { clearTimeout(t); }
 }
 
-async function fetchText(url) {
+async function fetchText(url, options = {}) {
+  const accept = typeof options.accept === 'function'
+    ? options.accept
+    : (value) => !!(value && value.trim());
+  const accepts = (value) => {
+    try { return !!accept(value); } catch (e) { return false; }
+  };
   const headers = {
     'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.5',
   };
@@ -403,7 +409,7 @@ async function fetchText(url) {
     const r = await fetchWithTimeout(url, { headers, redirect: 'follow' }, 8000);
     if (r.ok) {
       const text = await r.text();
-      if (text && text.trim()) return { text, via: 'direct' };
+      if (accepts(text)) return { text, via: 'direct' };
     }
   } catch (e) { /* CORS or network — fall through to proxies */ }
 
@@ -416,7 +422,8 @@ async function fetchText(url) {
       if (i === 0) {
         try {
           const envelope = JSON.parse(text);
-          if (envelope && envelope.status >= 200 && envelope.status < 300 && typeof envelope.body === 'string') {
+          if (envelope && envelope.status >= 200 && envelope.status < 300 &&
+              typeof envelope.body === 'string' && accepts(envelope.body)) {
             return { text: envelope.body, via: 'proxy' };
           }
         } catch (e) { /* not the cors.io envelope */ }
@@ -425,24 +432,37 @@ async function fetchText(url) {
       if (i === PROXIES.length - 1) {
         try {
           const j = JSON.parse(text);
-          if (j && typeof j.contents === 'string') return { text: j.contents, via: 'proxy' };
+          if (j && typeof j.contents === 'string' && accepts(j.contents)) return { text: j.contents, via: 'proxy' };
         } catch (e) { /* not JSON */ }
         continue;
       }
-      if (!/^\s*[{[]/.test(text)) return { text, via: 'proxy' };
+      if (!/^\s*[{[]/.test(text) && accepts(text)) return { text, via: 'proxy' };
     } catch (e) { /* try next proxy */ }
   }
   throw new Error('Could not fetch this URL from the browser (blocked by CORS).');
 }
 
 function looksLikeFeed(text) {
-  const t = String(text || '').slice(0, 400).toLowerCase();
-  return t.includes('<rss') || t.includes('<feed') || (t.includes('<?xml') && t.includes('<rss'));
+  const t = String(text || '').replace(/^\uFEFF/, '').slice(0, 1200).toLowerCase();
+  return /<\s*(?:rss|feed|rdf(?::rdf)?)\b/.test(t);
+}
+
+function isUsableFeedText(text) {
+  if (!looksLikeFeed(text)) return false;
+  if (typeof DOMParser === 'undefined') return true;
+  try {
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    if (doc.querySelector('parsererror')) return false;
+    const rootName = String(doc.documentElement && doc.documentElement.tagName || '')
+      .toLowerCase().split(':').pop();
+    return rootName === 'rss' || rootName === 'feed' || rootName === 'rdf';
+  } catch (e) {
+    return false;
+  }
 }
 
 async function fetchFeed(url) {
-  const { text } = await fetchText(url);
-  if (!looksLikeFeed(text)) throw new Error('This URL is not an RSS or Atom feed.');
+  const { text } = await fetchText(url, { accept: isUsableFeedText });
   return text;
 }
 
@@ -547,7 +567,7 @@ function parseFeed(text, feedUrl, options = {}) {
   const doc = new DOMParser().parseFromString(text, 'text/xml');
   if (doc.querySelector('parsererror')) throw new Error('Could not parse this feed.');
   const root = doc.documentElement;
-  const rootName = String(root.tagName || '').toLowerCase();
+  const rootName = String(root.tagName || '').toLowerCase().split(':').pop();
 
   let feedTitle = '', feedLink = '', feedIcon = '', feedGenerator = '';
   let feedAuthor = '', feedAuthorUrl = '', feedChannelId = '';
@@ -715,11 +735,35 @@ function substackHandleFromProfileUrl(u) {
 }
 
 async function youtubeChannelIdFromPage(handleUrl) {
-  const { text } = await fetchText(handleUrl);
-  const m = text.match(/"channelId":"(UC[\w-]{22})"/) ||
-            text.match(/"externalId":"(UC[\w-]{22})"/) ||
-            text.match(/"browseId":"(UC[\w-]{22})"/);
-  return m ? m[1] : null;
+  const { text } = await fetchText(handleUrl, { accept: youtubeChannelPageHasId });
+  return youtubeChannelIdFromHtml(text);
+}
+
+function youtubeChannelIdFromHtml(html) {
+  const text = String(html || '')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/\\u0022/gi, '"')
+    .replace(/\\"/g, '"');
+  const patterns = [
+    /["']?(?:channelId|externalId|browseId)["']?\s*:\s*["'](UC[\w-]{22})/i,
+    /(?:itemprop|name)\s*=\s*["']channelId["'][^>]+content\s*=\s*["'](UC[\w-]{22})/i,
+    /content\s*=\s*["'](UC[\w-]{22})["'][^>]+(?:itemprop|name)\s*=\s*["']channelId["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
+
+  const canonical = text.match(/<link\b[^>]+(?:rel\s*=\s*["'][^"']*canonical[^"']*["'][^>]+href\s*=\s*["']([^"']+)["']|href\s*=\s*["']([^"']+)["'][^>]+rel\s*=\s*["'][^"']*canonical[^"']*["'])/i);
+  if (canonical) {
+    try { return youtubeChannelIdFromUrl(new URL(canonical[1] || canonical[2])); } catch (e) { /* keep looking */ }
+  }
+  return null;
+}
+
+function youtubeChannelPageHasId(html) {
+  return !!youtubeChannelIdFromHtml(html);
 }
 
 function youtubeChannelIdFromFeedUrl(feedUrl) {
@@ -740,6 +784,11 @@ function youtubePlaylistId(channelId, prefix) {
 function youtubeVideosFeedUrl(channelId) {
   const playlistId = youtubePlaylistId(channelId, 'UULF');
   return playlistId ? 'https://www.youtube.com/feeds/videos.xml?playlist_id=' + playlistId : '';
+}
+
+function youtubeChannelFeedUrl(channelId) {
+  const id = normalizeYouTubeChannelId(channelId);
+  return id ? 'https://www.youtube.com/feeds/videos.xml?channel_id=' + id : '';
 }
 
 function youtubeShortsFeedUrl(channelId) {
@@ -771,6 +820,59 @@ function youtubeChannelIdFromSource(source, parsed) {
     if (id) return id;
   }
   return null;
+}
+
+function youtubeFeedCandidates(source) {
+  if (!source) return [];
+  const candidates = [source.feedUrl];
+  const channelId = youtubeChannelIdFromSource(source);
+  if (channelId) {
+    // Prefer the Videos playlist, then fall back to YouTube's documented
+    // channel feed if the playlist endpoint or a proxy is having trouble.
+    candidates.push(youtubeVideosFeedUrl(channelId), youtubeChannelFeedUrl(channelId));
+  }
+  try {
+    const u = new URL(source.url || '');
+    const user = youtubeUserFromUrl(u);
+    if (user) candidates.push('https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(user));
+  } catch (e) { /* the stored feed URL remains the only candidate */ }
+  return [...new Set(candidates.filter(Boolean))];
+}
+
+async function fetchFeedForSource(source) {
+  let candidates = isYouTubeSource(source) ? youtubeFeedCandidates(source) : [source && source.feedUrl];
+  let lastError = null;
+  const tried = new Set();
+  const tryCandidates = async (urls) => {
+    for (const feedUrl of urls) {
+      if (!feedUrl || tried.has(feedUrl)) continue;
+      tried.add(feedUrl);
+      try { return await fetchFeed(feedUrl); }
+      catch (error) { lastError = error; }
+    }
+    return null;
+  };
+
+  let text = await tryCandidates(candidates);
+  if (text != null) return text;
+
+  // Legacy saved sources may only have a /@handle or /user feed URL. Resolve
+  // the stable channel id once before giving up, then retry both feed forms.
+  if (isYouTubeSource(source) && !youtubeChannelIdFromSource(source)) {
+    const page = youtubeChannelPageUrl(source);
+    try {
+      const channelId = page ? await youtubeChannelIdFromPage(page) : null;
+      if (channelId) {
+        source.channelId = channelId;
+        source.channelUrl = source.channelUrl || page;
+        source.feedUrl = youtubeVideosFeedUrl(channelId) || source.feedUrl;
+        candidates = youtubeFeedCandidates(source);
+        text = await tryCandidates(candidates);
+        if (text != null) return text;
+      }
+    } catch (error) { lastError = error; }
+  }
+  throw lastError || new Error('Could not fetch this source.');
 }
 
 function canonicalizeYouTubeSource(source, parsed) {
@@ -929,7 +1031,7 @@ async function youtubeChannelImageFromSource(source) {
     if (!candidate || seen.has(candidate)) continue;
     seen.add(candidate);
     try {
-      const { text } = await fetchText(candidate);
+      const { text } = await fetchText(candidate, { accept: youtubeChannelPageHasId });
       const image = youtubeChannelAvatarFromHtml(text);
       if (image) return image;
     } catch (e) { /* try the next channel URL */ }
@@ -1269,7 +1371,7 @@ async function hydrateSource(source, resolved) {
   try {
     let text;
     try {
-      text = resolved.feedText || await fetchFeed(source.feedUrl);
+      text = resolved.feedText || await fetchFeedForSource(source);
     } catch (firstError) {
       // If the lightweight YouTube user feed is not mapped, fall back to the
       // channel page once and upgrade the source to its canonical UC feed.
@@ -1279,7 +1381,7 @@ async function hydrateSource(source, resolved) {
         source.channelId = channelId;
         source.channelUrl = source.channelUrl || source.url;
         source.feedUrl = youtubeVideosFeedUrl(channelId);
-        text = await fetchFeed(source.feedUrl);
+        text = await fetchFeedForSource(source);
       } else if (resolved.optimistic) {
         // Publication pages get an immediate /feed candidate. If that was a
         // 404/HTML page, now do the slower explicit alternate/candidate
@@ -1343,13 +1445,13 @@ async function fetchSourceOnce(sourceId, preParsed, preText) {
         await storePut('sources', source);
         persistSourceSnapshot();
       }
-      feedText = await fetchFeed(source.feedUrl);
+      feedText = await fetchFeedForSource(source);
       parsed = parseFeed(feedText, source.feedUrl);
     }
     if (canonicalizeYouTubeSource(source, parsed)) {
       await storePut('sources', source);
       persistSourceSnapshot();
-      feedText = await fetchFeed(source.feedUrl);
+      feedText = await fetchFeedForSource(source);
       parsed = parseFeed(feedText, source.feedUrl);
     }
     updateSourceMetadata(source, parsed, feedText);
