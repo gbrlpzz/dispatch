@@ -155,11 +155,11 @@ const REFRESH_MAX_ATTEMPTS = 3;
 const REFRESH_RETRY_DELAYS_MS = [0, 900, 2500];
 const REFRESH_CONCURRENCY = 2;
 
-// Keep the recent week plus the next couple of calendar days ready on first
-// launch. The window slides one day at a time as the selected date moves.
+// Keep the recent week and today ready on first launch. The window slides one
+// day at a time as the selected date moves; future dates are never loaded.
 const DAY_PRELOAD_BACK = 7;
-const DAY_BUFFER = 2;
-const DAY_CACHE_RETENTION = 1;
+const DAY_BUFFER = 0;
+const DAY_CACHE_RETENTION = 0;
 
 // Media is warmed through the browser cache only. Nothing is copied into
 // IndexedDB, and the bounded queue prevents a large archive from becoming a
@@ -344,8 +344,9 @@ function invalidateDayCache() {
 async function loadDayWindow(center, token) {
   if (!state.db) return;
 
-  const start = addDays(center, -DAY_PRELOAD_BACK);
-  const end = addDays(center, DAY_BUFFER);
+  const safeCenter = center > todayMidnight() ? todayMidnight() : center;
+  const start = addDays(safeCenter, -DAY_PRELOAD_BACK);
+  const end = addDays(safeCenter, DAY_BUFFER);
   const wanted = dayKeysBetween(start, end);
   const missing = wanted.filter((key) => !state.dayCache.has(key));
 
@@ -375,12 +376,13 @@ async function loadDayWindow(center, token) {
 }
 
 function requestDayWindow(center, renderWhenReady = true) {
-  const targetKey = dayKey(center);
+  const safeCenter = center > todayMidnight() ? todayMidnight() : center;
+  const targetKey = dayKey(safeCenter);
   if (state.dayLoadPromise && state.dayLoadKey === targetKey) return state.dayLoadPromise;
 
   const token = ++state.dayLoadToken;
   state.dayLoadKey = targetKey;
-  const promise = loadDayWindow(center, token)
+  const promise = loadDayWindow(safeCenter, token)
     .then(() => {
       if (renderWhenReady && token === state.dayLoadToken && dayKey(state.day) === targetKey) renderDay();
     })
@@ -1819,7 +1821,7 @@ async function removeSource(id) {
 
 /* ---------------- Rendering: strip ---------------- */
 
-const STRIP_BACK = 6, STRIP_FWD = 2, STRIP_EXTEND = 1;
+const STRIP_BACK = 6, STRIP_FWD = 0, STRIP_EXTEND = 1;
 
 function ensureStripRange() {
   const today = todayMidnight();
@@ -1827,12 +1829,13 @@ function ensureStripRange() {
     state.stripRange = { start: addDays(today, -STRIP_BACK), end: addDays(today, STRIP_FWD) };
     return;
   }
-  const d = state.day;
+  const d = state.day > today ? today : state.day;
   if (d < state.stripRange.start) {
     while (d < state.stripRange.start) state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
   } else if (d > state.stripRange.end) {
     while (d > state.stripRange.end) state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
   }
+  if (state.stripRange.end > today) state.stripRange.end = today;
 }
 
 function renderStrip({ center = false, smooth = false, preserveAnchorKey = null, preserveAnchorOffset = 0 } = {}) {
@@ -1852,7 +1855,7 @@ function renderStrip({ center = false, smooth = false, preserveAnchorKey = null,
     if (key === selKey) cls += ' bubble--selected';
     else if (key === dayKey(today)) cls += ' bubble--today';
     else if (d < today) cls += ' bubble--past';
-    else cls += ' bubble--future';
+    else continue;
     const b = el('button', cls);
     b.setAttribute('aria-label', d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
     b.dataset.day = key;
@@ -1882,6 +1885,8 @@ function renderStrip({ center = false, smooth = false, preserveAnchorKey = null,
 
 function extendStripRange(direction) {
   if (!state.stripRange) ensureStripRange();
+  const today = todayMidnight();
+  if (direction > 0 && state.stripRange.end >= today) return;
   const strip = $('#strip');
   const anchorKey = direction < 0
     ? dayKey(state.stripRange.start)
@@ -1893,6 +1898,7 @@ function extendStripRange(direction) {
     state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
   } else {
     state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+    if (state.stripRange.end > today) state.stripRange.end = today;
   }
   renderStrip({ preserveAnchorKey: anchorKey, preserveAnchorOffset: anchorOffset });
 }
@@ -2460,6 +2466,8 @@ function toast(msg) {
 function setDay(d, options = {}) {
   const next = addDays(d, 0);
   next.setHours(0, 0, 0, 0);
+  const today = todayMidnight();
+  if (next > today) return;
   state.day = next;
   // Keep one more date ready when navigation reaches either visible edge.
   // This also lets the desktop strip grow progressively when all current
@@ -2467,8 +2475,9 @@ function setDay(d, options = {}) {
   if (state.stripRange) {
     if (next <= addDays(state.stripRange.start, 1)) {
       state.stripRange.start = addDays(state.stripRange.start, -STRIP_EXTEND);
-    } else if (next >= addDays(state.stripRange.end, -1)) {
+    } else if (next >= addDays(state.stripRange.end, -1) && state.stripRange.end < today) {
       state.stripRange.end = addDays(state.stripRange.end, STRIP_EXTEND);
+      if (state.stripRange.end > today) state.stripRange.end = today;
     }
   }
   // Every intentional focus change recentres the complete carousel. The
@@ -2478,6 +2487,7 @@ function setDay(d, options = {}) {
 
 function goToDay(offset) {
   const dir = offset > 0 ? 1 : -1;
+  if (dir > 0 && state.day >= todayMidnight()) return;
   const w = $('#pager').clientWidth || window.innerWidth;
   const view = $('#dayview');
   if (view.dataset.swiping === '1') return;
@@ -2526,6 +2536,11 @@ function initSwipe() {
     const threshold = Math.min(90, w * 0.22);
     if (Math.abs(dx) > threshold) {
       const dir = dx < 0 ? 1 : -1;
+      if (dir > 0 && state.day >= todayMidnight()) {
+        view.style.transition = 'transform 0.32s var(--ease)';
+        view.style.transform = 'translateX(0)';
+        return;
+      }
       if (prefersReducedMotion()) {
         setDay(addDays(state.day, dir));
         return;
