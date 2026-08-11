@@ -39,7 +39,12 @@
   <div id="app">
     <header id="navbar">
       <button id="today-btn" class="nav-btn" aria-label="Jump to today">Today</button>
-      <h1 id="nav-title">Today</h1>
+      <div id="nav-title-group">
+        <h1 id="nav-title">Today</h1>
+        <div id="refresh-status" role="status" aria-label="Refreshing" hidden>
+          <span class="refresh-status__spinner" aria-hidden="true"></span>
+        </div>
+      </div>
       <div class="nav-right">
         <button id="sources-btn" class="nav-btn nav-btn--icon" aria-label="Manage sources" title="Sources">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
@@ -52,9 +57,6 @@
         <button id="add-btn" class="nav-btn nav-btn--icon" aria-label="Add source" title="Add source">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
-      </div>
-      <div id="refresh-status" role="status" aria-label="Refreshing" hidden>
-        <span class="refresh-status__spinner" aria-hidden="true"></span>
       </div>
     </header>
 

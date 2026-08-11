@@ -186,12 +186,24 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 
 .nav-right { display: flex; align-items: center; gap: 0; }
 
-#nav-title {
+#nav-title-group {
   position: absolute;
+  top: env(safe-area-inset-top);
   left: 50%;
   transform: translateX(-50%);
+  height: 44px;
+  display: flex;
+  align-items: center;
   width: max-content;
   max-width: calc(100% - 160px);
+  overflow: visible;
+}
+
+#nav-title {
+  position: static;
+  transform: none;
+  width: max-content;
+  max-width: 100%;
   font-size: 1rem;
   font-weight: 600;
   letter-spacing: -0.25px;
@@ -205,10 +217,11 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 
 #refresh-status {
   position: absolute;
-  top: env(safe-area-inset-top);
-  left: 0;
-  right: 0;
-  height: 44px;
+  top: 50%;
+  left: calc(100% + 7px);
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
