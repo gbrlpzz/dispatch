@@ -53,7 +53,7 @@ Everything runs in your browser and everything stays on your device:
     show name, episode duration and a link into Apple Podcasts (resolved via
     the iTunes search API at add time).
 - **Manage sources.** A Sources screen lists everything you follow. Swipe a
-  source row left to reveal Refresh and Delete actions; removing a source
+  source row left to reveal Refresh or right to reveal Delete; removing a source
   removes its items from the past, the present and the future.
 - **Reliable refresh.** Dispatch starts a source refresh on every app load while
   the boot screen is present, renders cached content immediately, and retries
