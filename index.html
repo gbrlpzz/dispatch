@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Dispatch</title>
   <meta name="description" content="Dispatch — a minimal, private, distraction-free personal feed arranged by day. Add Substack, YouTube and podcast feeds, swipe between days, everything stored on your device.">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -40,7 +40,7 @@
     <header id="navbar">
       <button id="today-btn" class="nav-btn" aria-label="Jump to today">Today</button>
       <div id="nav-title-group">
-        <h1 id="nav-title">Today</h1>
+        <h1 id="nav-title" aria-live="polite" aria-atomic="true">Today</h1>
         <div id="refresh-status" role="status" aria-label="Refreshing" hidden>
           <span class="refresh-status__spinner" aria-hidden="true"></span>
         </div>
@@ -62,7 +62,7 @@
 
     <nav id="strip" aria-label="Choose a day"></nav>
 
-    <main id="pager" aria-live="polite">
+    <main id="pager">
       <div id="dayview"></div>
     </main>
 
@@ -71,21 +71,21 @@
 
   <div id="backdrop" hidden></div>
 
-  <section id="sheet" role="dialog" aria-modal="true" hidden>
+  <section id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
     <div id="sheet-grabber"></div>
     <div id="sheet-body"></div>
   </section>
 
-  <section id="sources-screen" hidden>
+  <section id="sources-screen" role="dialog" aria-modal="true" aria-labelledby="sources-title" hidden>
     <header class="screen-nav">
       <button id="sources-done" class="nav-btn">Done</button>
-      <h2>Sources</h2>
+      <h2 id="sources-title">Sources</h2>
       <button id="sources-add" class="nav-btn nav-btn--icon" aria-label="Add source">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </header>
     <div id="sources-list"></div>
-    <p id="sources-footer">Deleting a source removes its items from every day.</p>
+    <p id="sources-footer">Swipe left to refresh · swipe right to delete.<br>Deleting a source removes its items from every day.</p>
   </section>
 
   <script src="app.js" defer></script>
