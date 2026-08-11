@@ -2233,12 +2233,10 @@ let refreshStatusTimer = null;
 
 function beginRefreshFeedback() {
   const status = $('#refresh-status');
-  const title = $('#nav-title');
-  if (!status || !title) return;
+  if (!status) return;
   if (refreshStatusTimer) clearTimeout(refreshStatusTimer);
   refreshStatusTimer = setTimeout(() => {
     status.hidden = false;
-    title.style.opacity = '0';
   }, 220);
 }
 
@@ -2248,9 +2246,7 @@ function endRefreshFeedback() {
     refreshStatusTimer = null;
   }
   const status = $('#refresh-status');
-  const title = $('#nav-title');
   if (status) status.hidden = true;
-  if (title) title.style.opacity = '';
 }
 
 function toast(msg) {
