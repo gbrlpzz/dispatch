@@ -82,13 +82,13 @@ Everything runs in your browser and everything stays on your device:
 2. **Fetching.** Feeds are parsed in the browser (RSS 2.0, Atom, and the
    YouTube Videos playlist feed). Each item is bucketed into the *device-local*
    day its `pubDate` falls on, deduplicated by GUID, and stored in IndexedDB.
-   The rolling local window keeps the previous seven days, today, and the next
-   two days ready. Card media for that window is warmed through the browser's
-   cache with a bounded queue; media binaries are never copied into IndexedDB.
-3. **The calendar.** The home strip starts with seven days back and the next two
-   days forward, so the immediate calendar is visible without loading feed
-   content for future days. It extends as you scroll. Each bubble shows a live
-   day/month date; the day view shows that day's feed items newest-first.
+   The rolling local window keeps the previous seven days and today ready. Card
+   media for that window is warmed through the browser's cache with a bounded
+   queue; media binaries are never copied into IndexedDB.
+3. **The calendar.** The home strip shows recent days through today and never
+   shows or loads future dates. It extends toward older dates as you scroll.
+   Each bubble shows a live day/month date; the day view shows that day's feed
+   items newest-first.
 4. **Refresh scheduling.** There is no background daemon — iOS doesn't allow
    web apps to fetch in the background. Instead Dispatch starts a refresh on
    every load, before the cached interface leaves its boot screen, and brings
