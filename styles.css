@@ -320,23 +320,10 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   margin: 0 16px 0.71rem;
   overflow: hidden;
   padding: 0.82rem;                     /* 14pt */
-  position: relative;
   transition: transform 0.5s var(--spring), opacity 0.3s var(--ease-fast);
   animation: card-enter 0.48s var(--ease) both;
   will-change: transform, opacity;
 }
-/* Keep the pressed state separate from the entrance animation. Cancelling
-   that animation on touch made it restart on release and flash the card. */
-.card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--fill);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s var(--ease-fast);
-}
-a.card:active::after { opacity: 1; }
 
 .card-media {
   margin: -0.82rem -0.82rem 0.71rem;
