@@ -52,15 +52,16 @@ Everything runs in your browser and everything stays on your device:
   - *Podcast* — native audio RSS feeds, with artwork or the show's source logo,
     show name, episode duration and a link into Apple Podcasts (resolved via
     the iTunes search API at add time).
-- **Manage sources.** A Sources screen lists everything you follow, with
-  swipe-to-delete. Removing a source removes its items from the past, the
-  present and the future.
+- **Manage sources.** A Sources screen lists everything you follow. Swipe a
+  source row left to reveal Refresh and Delete actions; removing a source
+  removes its items from the past, the present and the future.
 - **Reliable refresh.** Dispatch starts a source refresh on every app load while
   the boot screen is present, renders cached content immediately, and retries
   each source with backoff. It also refreshes stale sources when the app returns
   to the foreground and periodically while it's open, while keeping the last
   good items visible if a network request fails. Pull down on any day to
-  refresh immediately, or swipe an entry to the right to refresh its source.
+  refresh immediately, or open Sources and swipe a source row left to reveal
+  Refresh.
 - **Explicit provenance.** Actions identify the destination: “Read on
   Palladium”, “Read on Substack”, “Listen on Substack”, “Watch on YouTube”,
   or “Listen on Apple Podcasts”.
@@ -84,7 +85,7 @@ Everything runs in your browser and everything stays on your device:
    The rolling local window keeps the previous seven days, today, and the next
    two days ready. Card media for that window is warmed through the browser's
    cache with a bounded queue; media binaries are never copied into IndexedDB.
-3. **The calendar.** The home strip starts with six days back and the next two
+3. **The calendar.** The home strip starts with seven days back and the next two
    days forward, so the immediate calendar is visible without loading feed
    content for future days. It extends as you scroll. Each bubble shows a live
    day/month date; the day view shows that day's feed items newest-first.
