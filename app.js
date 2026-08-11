@@ -2256,6 +2256,7 @@ function renderSourcesList() {
   const list = $('#sources-list');
   const groups = el('div', 'source-group');
   for (const s of state.sources) groups.appendChild(buildSourceRow(s));
+
   list.innerHTML = '';
   if (state.sources.length === 0) {
     const empty = el('div', 'empty');
@@ -2269,8 +2270,14 @@ function renderSourcesList() {
   } else {
     list.appendChild(groups);
   }
-}
 
+  const footer = el('p', 'sources-footer');
+  footer.id = 'sources-footer';
+  footer.innerHTML =
+    'Swipe left to refresh · swipe right to delete.<br>' +
+    'Deleting a source removes its items from every day.';
+  list.appendChild(footer);
+}
 /* ---------------- Sheets ---------------- */
 
 let sheetMode = null;
@@ -2310,7 +2317,7 @@ function openSourcesScreen() {
   if (sourcesFocusFrame) cancelAnimationFrame(sourcesFocusFrame);
   sourcesFocusFrame = requestAnimationFrame(() => {
     sourcesFocusFrame = null;
-    if (!screen.hidden) $('#sources-done').focus();
+    if (!screen.hidden) screen.focus({ preventScroll: true });
   });
 }
 
