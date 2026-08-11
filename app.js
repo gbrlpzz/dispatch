@@ -2103,7 +2103,7 @@ function buildSourceRow(source, onDelete) {
   row.dataset.id = source.id;
   const letter = esc(source.title.trim()[0].toUpperCase() || '?');
   const icon = source.iconUrl
-    ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()">'
+    ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">'
     : letter;
   row.innerHTML =
     '<div class="source-icon" aria-hidden="true">' + icon + '</div>' +
@@ -2118,23 +2118,29 @@ function buildSourceRow(source, onDelete) {
     '</button>' +
     '<button class="s-delete" type="button" aria-label="Delete ' + esc(source.title) + '">Delete</button>';
 
+  // Swipe left for Refresh and right for Delete.
+  const actionWidth = 92;
+  const revealThreshold = 46;
+  let startX = null, startY = null, curDx = 0;
+  let openDirection = 0, dragging = false, axis = null, suppressClick = false;
+  const isActionTarget = (target) => !!(target && target.closest && target.closest('.s-delete, .s-refresh'));
+
+  const resetOpenState = () => {
+    openDirection = 0;
+    row.style.transform = 'translateX(0)';
+  };
+
   const delBtn = row.querySelector('.s-delete');
   delBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    resetOpenState();
     removeSource(source.id).then(() => toast('Removed “' + source.title + '”'));
   });
-
-  // Swipe left to reveal source actions (touch + mouse).
-  const actionWidth = 184;
-  const revealThreshold = 92;
-  let startX = null, startY = null, curDx = 0, open = false, dragging = false, axis = null;
-  const isActionTarget = (target) => !!(target && target.closest && target.closest('.s-delete, .s-refresh'));
 
   const refreshBtn = row.querySelector('.s-refresh');
   refreshBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    open = false;
-    row.style.transform = 'translateX(0)';
+    resetOpenState();
     refreshBtn.classList.add('s-refresh--busy');
     void refreshOneSource(source.id)
       .catch(() => {})
@@ -2146,7 +2152,7 @@ function buildSourceRow(source, onDelete) {
     startX = x;
     startY = y;
     axis = null;
-    curDx = open ? -actionWidth : 0;
+    curDx = openDirection * actionWidth;
     dragging = true;
     if (pid != null) { try { row.setPointerCapture(pid); } catch (e) { /* synthetic */ } }
   };
@@ -2163,7 +2169,7 @@ function buildSourceRow(source, onDelete) {
       }
     }
     if (axis !== 'x') return;
-    const next = Math.max(-actionWidth, Math.min(0, curDx + dx));
+    const next = Math.max(-actionWidth, Math.min(actionWidth, curDx + dx));
     row.style.transition = 'none';
     row.style.transform = 'translateX(' + next + 'px)';
   };
@@ -2172,11 +2178,14 @@ function buildSourceRow(source, onDelete) {
     dragging = false;
     if (axis === 'x') {
       const finalX = typeof x === 'number' ? x : startX;
-      const dx = finalX - startX;
-      open = (curDx + dx) < -revealThreshold;
+      const finalDx = curDx + finalX - startX;
+      if (finalDx <= -revealThreshold) openDirection = -1;
+      else if (finalDx >= revealThreshold) openDirection = 1;
+      else openDirection = 0;
+      suppressClick = true;
     }
     row.style.transition = '';
-    row.style.transform = open ? 'translateX(-' + actionWidth + 'px)' : 'translateX(0)';
+    row.style.transform = 'translateX(' + (openDirection * actionWidth) + 'px)';
   };
 
   row.addEventListener('touchstart', (e) => {
@@ -2200,9 +2209,14 @@ function buildSourceRow(source, onDelete) {
   row.addEventListener('pointerup', (e) => settle(e.clientX));
   row.addEventListener('pointercancel', () => settle(startX));
   row.addEventListener('click', (e) => {
-    if (open) {
-      open = false;
-      row.style.transform = 'translateX(0)';
+    if (suppressClick) {
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (openDirection) {
+      resetOpenState();
       e.stopPropagation();
     }
   });
