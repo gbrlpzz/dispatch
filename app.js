@@ -155,12 +155,18 @@ const REFRESH_MAX_ATTEMPTS = 3;
 const REFRESH_RETRY_DELAYS_MS = [0, 900, 2500];
 const REFRESH_CONCURRENCY = 2;
 
-// Keep today plus the six preceding calendar days ready on first launch.
-// One additional day stays warm as the forward buffer; the window slides one
-// day at a time as the selected date moves.
-const DAY_PRELOAD_BACK = 6;
-const DAY_BUFFER = 1;
+// Keep the recent week plus the next couple of calendar days ready on first
+// launch. The window slides one day at a time as the selected date moves.
+const DAY_PRELOAD_BACK = 7;
+const DAY_BUFFER = 2;
 const DAY_CACHE_RETENTION = 1;
+
+// Media is warmed through the browser cache only. Nothing is copied into
+// IndexedDB, and the bounded queue prevents a large archive from becoming a
+// large startup download.
+const MEDIA_PRELOAD_CONCURRENCY = 3;
+const MEDIA_PRELOAD_MAX = 64;
+const MEDIA_PRELOAD_DELAY_MS = 120;
 
 const sheetEl = () => $('#sheet');
 const sourcesScreenEl = () => $('#sources-screen');
@@ -346,6 +352,7 @@ async function loadDayWindow(center, token) {
   }
   state.dayRange = { start: dayKey(start), end: dayKey(end) };
   flattenDayCache();
+  scheduleMediaPreload();
 }
 
 function requestDayWindow(center, renderWhenReady = true) {
@@ -374,6 +381,75 @@ function requestDayWindow(center, renderWhenReady = true) {
     }
   });
   return promise;
+}
+
+let mediaPreloadTimer = null;
+
+function mediaWarmDayKeys() {
+  const keys = [dayKey(state.day)];
+  for (let offset = 1; offset <= DAY_BUFFER; offset++) keys.push(dayKey(addDays(state.day, offset)));
+  for (let offset = 1; offset <= DAY_PRELOAD_BACK; offset++) keys.push(dayKey(addDays(state.day, -offset)));
+  return keys;
+}
+
+function mediaUrlsForWarmWindow() {
+  const urls = [];
+  const seen = new Set();
+  for (const key of mediaWarmDayKeys()) {
+    for (const item of state.dayCache.get(key) || []) {
+      const url = String(item.imageUrl || '').trim();
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+      if (urls.length >= MEDIA_PRELOAD_MAX) return urls;
+    }
+  }
+  return urls;
+}
+
+function preloadMediaUrl(url) {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined') { resolve(); return; }
+    let timer = null;
+    let image;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (image) {
+        image.onload = null;
+        image.onerror = null;
+      }
+      resolve();
+    };
+    try {
+      image = new Image();
+      image.decoding = 'async';
+      image.loading = 'eager';
+      if ('fetchPriority' in image) image.fetchPriority = 'low';
+      image.onload = finish;
+      image.onerror = finish;
+      timer = setTimeout(finish, 12000);
+      image.src = url;
+    } catch (e) {
+      finish();
+    }
+  });
+}
+
+async function preloadDayMedia() {
+  const urls = mediaUrlsForWarmWindow();
+  if (!urls.length) return;
+  await mapWithConcurrency(urls, MEDIA_PRELOAD_CONCURRENCY, preloadMediaUrl);
+}
+
+function scheduleMediaPreload() {
+  if (mediaPreloadTimer) clearTimeout(mediaPreloadTimer);
+  mediaPreloadTimer = setTimeout(() => {
+    mediaPreloadTimer = null;
+    void preloadDayMedia().catch(() => {});
+  }, MEDIA_PRELOAD_DELAY_MS);
 }
 
 /* ---------------- Feed fetching (local, in-browser) ---------------- */
@@ -2113,6 +2189,7 @@ function renderAll(options = {}) {
   renderSourcesList();
   const key = dayKey(state.day);
   if (state.db && !state.dayCache.has(key)) requestDayWindow(state.day);
+  else scheduleMediaPreload();
 }
 
 function dismissBootScreen() {
@@ -2658,7 +2735,7 @@ async function init() {
     state.sources = await restoreSourcesFromSnapshot();
   }
   // Do not pull the complete archive into memory at startup. The durable
-  // IndexedDB archive is queried for the seven-day window plus one-day buffer.
+  // IndexedDB archive is queried for the recent week plus the next two days.
   state.items = [];
   await requestDayWindow(state.day, false);
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
@@ -2671,13 +2748,21 @@ async function init() {
   initPullToRefresh();
   initAutoRefresh();
 
+  // Always begin a fresh network pass on app load. It starts while the boot
+  // screen is still present, but cached local content is rendered immediately
+  // so a slow or unavailable network never becomes a blank-screen blocker.
+  const initialRefresh = refreshAll(true, { notify: false }).catch(() => ({
+    succeeded: 0,
+    failed: state.sources.length,
+  }));
   renderAll();
   dismissBootScreen();
   void Promise.all([
+    initialRefresh,
     upgradeYouTubeSourceIcons(),
     upgradeMissingArticleImages(),
     upgradeYouTubeSources(),
-  ]).then(() => maybeAutoRefresh()).catch(() => maybeAutoRefresh()).catch(() => {});
+  ]).catch(() => {});
 
   // keyboard: day navigation, ESC to close overlays
   document.addEventListener('keydown', (e) => {
