@@ -420,8 +420,16 @@ function syncLoadedDayCache() {
 
   dayCacheSyncPromise = run;
   void run.then(
-    () => { if (dayCacheSyncPromise === run) dayCacheSyncPromise = null; },
-    () => { if (dayCacheSyncPromise === run) dayCacheSyncPromise = null; }
+    () => {
+      if (dayCacheSyncPromise !== run) return;
+      dayCacheSyncPromise = null;
+      if (dayCacheSyncQueued) void syncLoadedDayCache();
+    },
+    () => {
+      if (dayCacheSyncPromise !== run) return;
+      dayCacheSyncPromise = null;
+      dayCacheSyncQueued = false;
+    }
   );
   return run;
 }
@@ -2226,6 +2234,7 @@ function renderDayIncremental() {
       .map((card) => [card.dataset.itemKey, card])
   );
   const footer = view.querySelector('.app-footer') || buildAppCredit();
+  view.appendChild(footer);
 
   for (const card of existing.values()) {
     if (!items.some((item) => itemIdentity(item) === card.dataset.itemKey)) card.remove();
