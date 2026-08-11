@@ -171,6 +171,25 @@ const MEDIA_PRELOAD_DELAY_MS = 120;
 const sheetEl = () => $('#sheet');
 const sourcesScreenEl = () => $('#sources-screen');
 
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function motionDelay(ms) {
+  return prefersReducedMotion() ? 0 : ms;
+}
+
+function syncAppInert() {
+  const app = $('#app');
+  if (!app) return;
+  const blocked = !sheetEl().hidden || !sourcesScreenEl().hidden;
+  app.inert = blocked;
+  if (blocked) app.setAttribute('inert', '');
+  else app.removeAttribute('inert');
+}
+
 /* ---------------- IndexedDB ---------------- */
 
 function openDB() {
@@ -2077,7 +2096,7 @@ function dismissBootScreen() {
   if (!boot) return;
   requestAnimationFrame(() => {
     boot.classList.add('boot-screen--hidden');
-    setTimeout(() => boot.remove(), 430);
+    setTimeout(() => boot.remove(), motionDelay(430));
   });
 }
 
@@ -2129,8 +2148,14 @@ function buildSourceRow(source, onDelete) {
     openDirection = 0;
     row.style.transform = 'translateX(0)';
   };
+  const revealAction = (direction) => {
+    openDirection = direction;
+    row.style.transition = '';
+    row.style.transform = 'translateX(' + (direction * actionWidth) + 'px)';
+  };
 
   const delBtn = row.querySelector('.s-delete');
+  delBtn.addEventListener('focus', () => revealAction(1));
   delBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     resetOpenState();
@@ -2138,13 +2163,18 @@ function buildSourceRow(source, onDelete) {
   });
 
   const refreshBtn = row.querySelector('.s-refresh');
+  refreshBtn.addEventListener('focus', () => revealAction(-1));
   refreshBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     resetOpenState();
+    refreshBtn.setAttribute('aria-busy', 'true');
     refreshBtn.classList.add('s-refresh--busy');
     void refreshOneSource(source.id)
       .catch(() => {})
-      .finally(() => refreshBtn.classList.remove('s-refresh--busy'));
+      .finally(() => {
+        refreshBtn.removeAttribute('aria-busy');
+        refreshBtn.classList.remove('s-refresh--busy');
+      });
   });
 
   const down = (x, y, pid) => {
@@ -2245,6 +2275,8 @@ function renderSourcesList() {
 
 let sheetMode = null;
 let sheetOpener = null;
+let sourcesOpener = null;
+let sourcesFocusFrame = null;
 
 function openSheet(mode) {
   sheetMode = mode;
@@ -2252,6 +2284,7 @@ function openSheet(mode) {
   $('#backdrop').hidden = false;
   const sheet = sheetEl();
   sheet.hidden = false;
+  syncAppInert();
   requestAnimationFrame(() => sheet.classList.add('sheet-open'));
   buildSheet(mode);
 }
@@ -2263,9 +2296,34 @@ function closeSheet() {
   setTimeout(() => {
     sheet.hidden = true;
     sheetMode = null;
+    syncAppInert();
     if (sheetOpener && document.contains(sheetOpener)) sheetOpener.focus();
     sheetOpener = null;
-  }, 460);
+  }, motionDelay(460));
+}
+
+function openSourcesScreen() {
+  sourcesOpener = document.activeElement;
+  const screen = sourcesScreenEl();
+  screen.hidden = false;
+  syncAppInert();
+  if (sourcesFocusFrame) cancelAnimationFrame(sourcesFocusFrame);
+  sourcesFocusFrame = requestAnimationFrame(() => {
+    sourcesFocusFrame = null;
+    if (!screen.hidden) $('#sources-done').focus();
+  });
+}
+
+function closeSourcesScreen() {
+  const screen = sourcesScreenEl();
+  screen.hidden = true;
+  syncAppInert();
+  if (sourcesFocusFrame) {
+    cancelAnimationFrame(sourcesFocusFrame);
+    sourcesFocusFrame = null;
+  }
+  if (sourcesOpener && document.contains(sourcesOpener)) sourcesOpener.focus();
+  sourcesOpener = null;
 }
 
 function buildSheet(mode) {
@@ -2279,11 +2337,14 @@ function sheetNav(title, actionLabel, onAction, actionEnabled) {
   nav.innerHTML =
     '<button class="nav-btn" data-sheet-cancel>Cancel</button>' +
     '<h2>' + esc(title) + '</h2>' +
-    '<button class="nav-btn nav-btn--icon nav-btn--disabled" data-sheet-action>' + esc(actionLabel) + '</button>';
+    '<button class="nav-btn nav-btn--icon nav-btn--disabled" data-sheet-action disabled>' + esc(actionLabel) + '</button>';
   nav.querySelector('[data-sheet-cancel]').addEventListener('click', closeSheet);
   const action = nav.querySelector('[data-sheet-action]');
   action.addEventListener('click', onAction);
-  if (actionEnabled) action.classList.remove('nav-btn--disabled');
+  if (actionEnabled) {
+    action.disabled = false;
+    action.classList.remove('nav-btn--disabled');
+  }
   return nav;
 }
 
@@ -2292,6 +2353,7 @@ function fieldRow(icon, placeholder, inputAttrs) {
   wrap.innerHTML = '<span aria-hidden="true">' + icon + '</span>';
   const input = document.createElement('input');
   input.placeholder = placeholder;
+  input.setAttribute('aria-label', placeholder);
   input.autocapitalize = 'off';
   input.autocorrect = 'off';
   input.spellcheck = false;
@@ -2313,6 +2375,7 @@ function buildSourceSheet() {
     const url = urlRow.input.value.trim();
     if (!url || btn.dataset.busy) return;
     btn.dataset.busy = '1';
+    btn.disabled = true;
     btn.textContent = 'Adding…';
     btn.classList.add('nav-btn--disabled');
     urlRow.input.disabled = true;
@@ -2322,6 +2385,7 @@ function buildSourceSheet() {
       toast('Source added');
     } catch (err) {
       btn.dataset.busy = '';
+      btn.disabled = false;
       btn.textContent = 'Add';
       btn.classList.remove('nav-btn--disabled');
       urlRow.input.disabled = false;
@@ -2337,7 +2401,9 @@ function buildSourceSheet() {
   const action = nav.querySelector('[data-sheet-action]');
   const updateAction = () => {
     const hasUrl = urlRow.input.value.trim().length >= 8;
-    action.classList.toggle('nav-btn--disabled', !hasUrl || !!action.dataset.busy);
+    const disabled = !hasUrl || !!action.dataset.busy;
+    action.disabled = disabled;
+    action.classList.toggle('nav-btn--disabled', disabled);
   };
   urlRow.input.addEventListener('input', updateAction);
   urlRow.input.addEventListener('change', updateAction);
@@ -2408,6 +2474,10 @@ function goToDay(offset) {
   const w = $('#pager').clientWidth || window.innerWidth;
   const view = $('#dayview');
   if (view.dataset.swiping === '1') return;
+  if (prefersReducedMotion()) {
+    setDay(addDays(state.day, dir));
+    return;
+  }
   view.style.transition = 'transform 0.38s var(--ease)';
   view.style.transform = 'translateX(' + (-dir * w) + 'px)';
   setTimeout(() => {
@@ -2449,6 +2519,10 @@ function initSwipe() {
     const threshold = Math.min(90, w * 0.22);
     if (Math.abs(dx) > threshold) {
       const dir = dx < 0 ? 1 : -1;
+      if (prefersReducedMotion()) {
+        setDay(addDays(state.day, dir));
+        return;
+      }
       view.dataset.swiping = '1';
       view.style.transition = 'transform 0.38s var(--ease)';
       view.style.transform = 'translateX(' + (-dir * w) + 'px)';
@@ -2618,11 +2692,50 @@ function initStripSpotlight() {
   }
 }
 
+function focusableWithin(root) {
+  return Array.from(root.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )).filter((node) => !node.hidden && !node.closest('[hidden]') && node.getClientRects().length);
+}
+
+function trapOverlayFocus(event) {
+  if (event.key !== 'Tab') return false;
+  const overlay = !sheetEl().hidden
+    ? sheetEl()
+    : (!sourcesScreenEl().hidden ? sourcesScreenEl() : null);
+  if (!overlay) return false;
+
+  const focusable = focusableWithin(overlay);
+  if (!focusable.length) {
+    event.preventDefault();
+    return true;
+  }
+  const active = document.activeElement;
+  if (!overlay.contains(active)) {
+    event.preventDefault();
+    focusable[0].focus();
+    return true;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+    return true;
+  }
+  if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+    return true;
+  }
+  return false;
+}
+
 function initNav() {
   $('#today-btn').addEventListener('click', () => setDay(todayMidnight()));
   $('#add-btn').addEventListener('click', () => openSheet('source'));
-  $('#sources-btn').addEventListener('click', () => { $('#sources-screen').hidden = false; });
-  $('#sources-done').addEventListener('click', () => { $('#sources-screen').hidden = true; });
+  $('#sources-btn').addEventListener('click', openSourcesScreen);
+  $('#sources-done').addEventListener('click', closeSourcesScreen);
 
   $('#strip').addEventListener('click', (e) => {
     const b = e.target.closest('.bubble');
@@ -2701,12 +2814,13 @@ async function init() {
     upgradeYouTubeSources(),
   ]).catch(() => {});
 
-  // keyboard: day navigation, ESC to close overlays
+  // Keyboard: day navigation, modal focus management, and ESC to close overlays.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (!sourcesScreenEl().hidden) { sourcesScreenEl().hidden = true; return; }
       if (!sheetEl().hidden) { closeSheet(); return; }
+      if (!sourcesScreenEl().hidden) { closeSourcesScreen(); return; }
     }
+    if (trapOverlayFocus(e)) return;
     if (!sheetEl().hidden || !sourcesScreenEl().hidden) return;
     if (e.key === 'ArrowLeft') goToDay(-1);
     else if (e.key === 'ArrowRight') goToDay(1);
