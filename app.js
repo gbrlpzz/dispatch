@@ -141,6 +141,7 @@ const state = {
   dayLoadPromise: null,
   dayLoadKey: null,
   dayLoadToken: 0,
+  renderedDayKey: null,
   // A source can be touched by the initial hydrator, an automatic refresh,
   // or a source-list action. Keep both the single fetch and the retrying
   // refresh operation deduplicated so those paths never race each other.
@@ -362,11 +363,29 @@ function dayItemsEqual(left, right) {
   return right.every((item) => previous.get(itemIdentity(item)) === itemDataSignature(item));
 }
 
+function mergeDayItems(previous, next) {
+  const merged = previous.slice();
+  const indexes = new Map(merged.map((item, index) => [itemIdentity(item), index]));
+  for (const item of next) {
+    const identity = itemIdentity(item);
+    const index = indexes.get(identity);
+    if (index == null) {
+      indexes.set(identity, merged.length);
+      merged.push(item);
+    } else {
+      merged[index] = item;
+    }
+  }
+  return merged;
+}
+
 let dayCacheSyncPromise = null;
 let dayCacheSyncQueued = false;
+let dayCacheSyncRemoveMissing = false;
 
-function syncLoadedDayCache() {
+function syncLoadedDayCache(removeMissing = false) {
   if (!state.db || !state.dayRange) return Promise.resolve(false);
+  dayCacheSyncRemoveMissing = dayCacheSyncRemoveMissing || removeMissing;
   dayCacheSyncQueued = true;
   if (dayCacheSyncPromise) return dayCacheSyncPromise;
 
@@ -374,6 +393,8 @@ function syncLoadedDayCache() {
     let changedAny = false;
     do {
       dayCacheSyncQueued = false;
+      const removeMissing = dayCacheSyncRemoveMissing;
+      dayCacheSyncRemoveMissing = false;
       const range = { start: state.dayRange.start, end: state.dayRange.end };
       let rows;
       try {
@@ -402,8 +423,9 @@ function syncLoadedDayCache() {
         const previous = state.dayCache.get(key);
         if (previous === undefined) continue;
         const next = grouped.get(key) || [];
-        if (!dayItemsEqual(previous, next)) {
-          state.dayCache.set(key, next);
+        const reconciled = removeMissing ? next : mergeDayItems(previous, next);
+        if (!dayItemsEqual(previous, reconciled)) {
+          state.dayCache.set(key, reconciled);
           changed = true;
         }
       }
@@ -1878,7 +1900,7 @@ async function purgeKnownYouTubeShorts(source) {
       .map((item) => item.id);
     if (drop.length) {
       await deleteItemsByIds(drop);
-      await syncLoadedDayCache();
+      await syncLoadedDayCache(true);
     }
     source.youtubeShortsCheckedAt = new Date().toISOString();
     await storePut('sources', source);
@@ -1922,7 +1944,7 @@ async function upgradeYouTubeSources() {
 async function removeSource(id) {
   await deleteSourceCascade(id);
   state.sources = state.sources.filter((s) => s.id !== id);
-  await syncLoadedDayCache();
+  await syncLoadedDayCache(true);
   persistSourceSnapshot();
   renderSourcesList();
   renderDayIncremental();
@@ -2264,6 +2286,7 @@ function renderDayIncremental() {
 
   view.appendChild(footer);
   animateDayReflow(before);
+  state.renderedDayKey = key;
   $('#nav-title').textContent = navTitle(day);
 }
 
@@ -2272,6 +2295,13 @@ function renderDay() {
   const key = dayKey(day);
   const view = $('#dayview');
   const cached = state.dayCache.get(key);
+  const hasMountedDay = state.renderedDayKey === key && view.querySelector('.card, .empty');
+  if (hasMountedDay) {
+    $('#nav-title').textContent = navTitle(day);
+    if (cached === undefined) return;
+    renderDayIncremental();
+    return;
+  }
   const items = visibleDayItems(cached);
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
 
@@ -2289,6 +2319,7 @@ function renderDay() {
 
   view.innerHTML = '';
   view.appendChild(frag);
+  state.renderedDayKey = key;
   $('#nav-title').textContent = navTitle(day);
 }
 
