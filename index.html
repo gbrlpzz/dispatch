@@ -76,7 +76,7 @@
     <div id="sheet-body"></div>
   </section>
 
-  <section id="sources-screen" role="dialog" aria-modal="true" aria-labelledby="sources-title" hidden>
+  <section id="sources-screen" role="dialog" aria-modal="true" aria-labelledby="sources-title" tabindex="-1" hidden>
     <header class="screen-nav">
       <button id="sources-done" class="nav-btn">Done</button>
       <h2 id="sources-title">Sources</h2>
@@ -85,8 +85,7 @@
       </button>
     </header>
     <div id="sources-list"></div>
-    <p id="sources-footer">Swipe left to refresh · swipe right to delete.<br>Deleting a source removes its items from every day.</p>
-  </section>
+      </section>
 
   <script src="app.js" defer></script>
   <script>

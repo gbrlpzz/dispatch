@@ -630,6 +630,7 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
   padding-top: env(safe-area-inset-top);
 }
 #sources-screen[hidden] { display: flex; transform: translateX(100%); pointer-events: none; }
+#sources-screen:focus { outline: none; }
 
 .screen-nav {
   flex: none;
@@ -757,12 +758,11 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
 .source-row .s-delete:active { opacity: 0.8; }
 
 #sources-footer {
-  flex: none;
   line-height: 1.45;
   text-align: center;
   font-size: 0.765rem;
   color: var(--tertiary);
-  padding: 4px 24px calc(18px + env(safe-area-inset-bottom));
+  padding: 1.18rem 24px calc(18px + env(safe-area-inset-bottom));
 }
 
 /* ---------------- App credit ---------------- */
