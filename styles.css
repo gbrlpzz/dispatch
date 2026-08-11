@@ -734,7 +734,7 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
 .source-row .s-refresh__icon svg { width: 100%; height: 100%; }
 .source-row .s-refresh--busy .s-refresh__icon { animation: spin 1s linear infinite; }
 .source-row .s-delete {
-  right: -184px;
+  left: -92px;
   background: #ff3b30;
   color: #fff;
 }
