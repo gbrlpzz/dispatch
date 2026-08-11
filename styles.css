@@ -122,7 +122,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   color: var(--tertiary);
   opacity: 1;
   visibility: visible;
-  transition: opacity 0.42s var(--ease), visibility 0s linear 0.22s;
+  transition: opacity 0.42s var(--ease), visibility 0s linear 0.42s;
 }
 #boot-screen.boot-screen--hidden {
   opacity: 0;
@@ -428,7 +428,7 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
   gap: 6px;
   margin-top: 0.71rem;                  /* 12pt */
   padding: 0.41rem 0.82rem;             /* 7/14pt */
-  min-height: 2rem;
+  min-height: 44px;
   border-radius: var(--radius-pill);
   background: var(--fill);
   font-size: 0.882rem;
@@ -545,12 +545,18 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
 #sheet[hidden] { display: flex; transform: translateY(105%); pointer-events: none; }
 
 #sheet-grabber {
+  position: relative;
   flex: none;
   width: 36px; height: 5px;
   border-radius: 3px;
   background: var(--fill-strong);
   margin: 8px auto 4px;
   touch-action: none;
+}
+#sheet-grabber::after {
+  content: '';
+  position: absolute;
+  inset: -19px -10px;
 }
 
 #sheet-body {
@@ -706,6 +712,15 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
 .source-row .s-title { font-size: 1rem; font-weight: 500; letter-spacing: -0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .source-row .s-sub { font-size: 0.765rem; color: var(--secondary); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .source-row .s-sub--error { color: var(--error); }
+.card-title,
+.card-byline,
+.card-summary,
+.source-name,
+.s-title,
+.s-sub {
+  -webkit-user-select: text;
+  user-select: text;
+}
 .source-row .s-chevron { flex: none; color: var(--tertiary); width: 12px; height: 12px; }
 .source-row .s-refresh,
 .source-row .s-delete {
@@ -743,6 +758,7 @@ a.card:active { animation: none; transform: scale(0.98); opacity: 0.85; }
 
 #sources-footer {
   flex: none;
+  line-height: 1.45;
   text-align: center;
   font-size: 0.765rem;
   color: var(--tertiary);
