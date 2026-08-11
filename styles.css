@@ -321,13 +321,12 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   overflow: hidden;
   padding: 0.82rem;                     /* 14pt */
   transition: transform 0.5s var(--spring), opacity 0.3s var(--ease-fast);
-  animation: card-enter 0.48s var(--ease) both;
+  animation: none;
   will-change: transform, opacity;
 }
 
-/* Incremental refreshes give newly arrived items a slightly longer,
-   quieter entrance than the initial day render. */ 
-.card--incoming { animation-duration: 0.62s; }
+/* Only cards arriving after the initial cached render animate. */
+.card--incoming { animation: card-enter 0.62s var(--ease) both; }
 
 .card-media {
   margin: -0.82rem -0.82rem 0.71rem;
