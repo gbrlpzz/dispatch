@@ -1918,7 +1918,7 @@ function scrollStripTo(dayKeyVal, smooth) {
 function sourceBadge(source) {
   const letter = source && source.title ? esc(source.title.trim()[0].toUpperCase()) : '?';
   if (source && source.iconUrl) {
-    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()"></span>';
+    return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" decoding="async" draggable="false" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()"></span>';
   }
   return '<span class="source-badge" aria-hidden="true">' + letter + '</span>';
 }
@@ -1974,19 +1974,19 @@ function buildItemCard(item, source) {
   let media = '';
   if (item.kind === 'youtube' && item.imageUrl) {
     media = '<div class="card-media">' +
-      '<img class="media-reveal" src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" decoding="async" draggable="false" src="' + esc(item.imageUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       (item.duration ? '<span class="duration-badge mono-glyph">' + fmtDuration(item.duration) + '</span>' : '') +
       '</div>';
   } else if ((item.kind === 'article' || substack) && editorialImage) {
     media = '<div class="card-media">' +
-      '<img class="media-reveal" src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
+      '<img class="media-reveal" decoding="async" draggable="false" src="' + esc(editorialImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.parentElement.style.display=\'none\'">' +
       '</div>';
   }
 
   let body;
   if (isAudioItem(item) && !substack) {
     const art = podcastImage
-      ? '<img class="media-reveal" src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
+      ? '<img class="media-reveal" decoding="async" draggable="false" src="' + esc(podcastImage) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove();this.parentElement.classList.add(\'pod-art--fallback\')"><span class="pod-art-fallback" aria-hidden="true">' + KIND_META.podcast.icon + '</span>'
       : KIND_META.podcast.icon;
     body =
       '<div class="pod-row">' +
