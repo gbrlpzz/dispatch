@@ -1141,8 +1141,8 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
 
   try {
     await storeBulkPut('items', updates);
-    invalidateDayCache();
-    renderAll();
+    await syncLoadedDayCache();
+    renderDayIncremental();
   } catch (e) { /* keep the feed usable even if image enrichment cannot persist */ }
 }
 
@@ -1857,7 +1857,10 @@ async function upgradeYouTubeSourceIcons() {
       changed = true;
     } catch (e) { /* keep the existing fallback icon */ }
   });
-  if (changed) renderAll();
+  if (changed) {
+    renderSourcesList();
+    renderDayIncremental();
+  }
 }
 
 async function purgeKnownYouTubeShorts(source) {
