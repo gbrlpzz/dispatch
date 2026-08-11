@@ -27,8 +27,10 @@ Everything runs in your browser and everything stays on your device:
   the browser ever evicts the database.
 - **Local feed pulling.** Feed fetching happens in your browser. Feeds that
   allow direct access are read directly; feeds that block browser requests
-  fall back to a small list of public CORS proxies, in order. No feed data
-  ever touches a server you don't choose.
+  fall back to a small list of public CORS proxies, in order. Feed responses
+  are validated before they are accepted, and YouTube can fall back from its
+  Videos playlist to the stable channel feed. No feed data ever touches a
+  server you don't choose.
 
 ## Features
 
