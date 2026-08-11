@@ -1962,11 +1962,9 @@ function pillLabel(item, source) {
 }
 
 function buildItemCard(item, source) {
-  const card = el('a', 'card');
-  card.href = cardTarget(item, source) || '#';
-  card.target = '_blank';
-  card.rel = 'noopener noreferrer';
-  card.setAttribute('role', 'link');
+  const card = el('article', 'card');
+  const targetUrl = cardTarget(item, source) || '#';
+  const actionLabel = pillLabel(item, source);
 
   const substack = isSubstackSource(source);
   const podcastImage = item.imageUrl || (source && source.iconUrl) || '';
@@ -2013,7 +2011,9 @@ function buildItemCard(item, source) {
       '<span class="relative-time">' + esc(timeAgo(item.publishedAt)) + '</span>' +
     '</div>' +
     body +
-    '<span class="pill"><span>' + pillLabel(item, source) + '</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
+    '<a class="pill" href="' + esc(targetUrl) + '" target="_blank" rel="noopener noreferrer">' +
+      '<span>' + esc(actionLabel) + '</span><span class="pill-arrow" aria-hidden="true">↗</span>' +
+    '</a>';
 
   return card;
 }
