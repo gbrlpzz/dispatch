@@ -1401,7 +1401,7 @@ async function hydrateSource(source, resolved) {
     if (canonicalizeYouTubeSource(source, parsed)) {
       await storePut('sources', source);
       persistSourceSnapshot();
-      text = await fetchFeed(source.feedUrl);
+      text = await fetchFeedForSource(source);
       parsed = parseFeed(text, source.feedUrl);
     }
     updateSourceMetadata(source, parsed, text);
