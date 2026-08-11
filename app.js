@@ -141,11 +141,19 @@ const state = {
   dayLoadPromise: null,
   dayLoadKey: null,
   dayLoadToken: 0,
+  // A source can be touched by the initial hydrator, an automatic refresh,
+  // or a card recovery gesture. Keep both the single fetch and the retrying
+  // refresh operation deduplicated so those paths never race each other.
+  sourceFetchPromises: new Map(),
+  sourceRefreshPromises: new Map(),
 };
 
 const STALE_OPEN_MS = 12 * 3600000;
 const STALE_IDLE_MS = 24 * 3600000;
 const SOURCE_SNAPSHOT_KEY = 'dispatch.source-snapshot.v1';
+const REFRESH_MAX_ATTEMPTS = 3;
+const REFRESH_RETRY_DELAYS_MS = [0, 900, 2500];
+const REFRESH_CONCURRENCY = 2;
 
 // Keep today plus the six preceding calendar days ready on first launch.
 // One additional day stays warm as the forward buffer; the window slides one
@@ -393,7 +401,10 @@ async function fetchText(url) {
   };
   try {
     const r = await fetchWithTimeout(url, { headers, redirect: 'follow' }, 8000);
-    if (r.ok) return { text: await r.text(), via: 'direct' };
+    if (r.ok) {
+      const text = await r.text();
+      if (text && text.trim()) return { text, via: 'direct' };
+    }
   } catch (e) { /* CORS or network — fall through to proxies */ }
 
   for (let i = 0; i < PROXIES.length; i++) {
@@ -401,6 +412,7 @@ async function fetchText(url) {
       const r = await fetchWithTimeout(PROXIES[i](url), { headers }, 10000);
       if (!r.ok) continue;
       const text = await r.text();
+      if (!text || !text.trim()) continue;
       if (i === 0) {
         try {
           const envelope = JSON.parse(text);
@@ -417,7 +429,7 @@ async function fetchText(url) {
         } catch (e) { /* not JSON */ }
         continue;
       }
-      if (text && !/^\s*[{[]/.test(text)) return { text, via: 'proxy' };
+      if (!/^\s*[{[]/.test(text)) return { text, via: 'proxy' };
     } catch (e) { /* try next proxy */ }
   }
   throw new Error('Could not fetch this URL from the browser (blocked by CORS).');
@@ -824,7 +836,7 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
       item.imageUrl = await articleImageFromPage(item.link);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(2, candidates.length) }, worker));
 
   const source = state.sources.find((candidate) => candidate.id === sourceId);
   if (!source || source.type !== 'article') return;
@@ -848,13 +860,13 @@ async function upgradeMissingArticleImages() {
     if (source.type !== 'article' || !source.lastFetchedAt) return false;
     return now - new Date(source.lastFetchedAt).getTime() <= STALE_OPEN_MS;
   });
-  await Promise.all(articleSources.map(async (source) => {
+  await mapWithConcurrency(articleSources, 2, async (source) => {
     const existing = await storeGetBySourceId(source.id);
     const missing = existing
       .filter((item) => !item.imageUrl && item.link)
       .map((item) => ({ guid: item.guid, link: item.link, imageUrl: '' }));
     if (missing.length) await enrichMissingArticleImages(source.id, missing);
-  }));
+  });
 }
 
 function youtubeChannelAvatarFromHtml(html) {
@@ -1299,7 +1311,8 @@ async function hydrateSource(source, resolved) {
     const lookup = source.type === 'podcast' && !source.itunesUrl
       ? itunesLookup(parsed.feedTitle)
       : Promise.resolve(null);
-    await fetchSource(source.id, parsed, text);
+    const fetched = await fetchSource(source.id, parsed, text);
+    if (!fetched.ok) throw fetched.error || new Error('Could not fetch this source.');
     if (!state.sources.some((s) => s.id === source.id)) return;
     const it = await lookup;
     if (it) {
@@ -1320,11 +1333,10 @@ async function hydrateSource(source, resolved) {
   renderAll();
 }
 
-async function fetchSource(sourceId, preParsed, preText) {
+async function fetchSourceOnce(sourceId, preParsed, preText) {
   const source = state.sources.find((s) => s.id === sourceId);
   if (!source) return;
-  try {
-    let parsed = preParsed;
+  let parsed = preParsed;
     let feedText = preText || '';
     if (!parsed) {
       if (canonicalizeYouTubeSource(source)) {
@@ -1409,24 +1421,126 @@ async function fetchSource(sourceId, preParsed, preText) {
     if (channelIconPromise) {
       void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
     }
-  } catch (err) {
-    source.lastError = err && err.message ? err.message : String(err);
-    await storePut('sources', source);
-    persistSourceSnapshot();
+}
+
+function sourceErrorMessage(error) {
+  return error && error.message ? error.message : String(error || 'Refresh failed');
+}
+
+function fetchSource(sourceId, preParsed, preText) {
+  const active = state.sourceFetchPromises.get(sourceId);
+  if (active) return active;
+
+  const promise = (async () => {
+    const source = state.sources.find((s) => s.id === sourceId);
+    if (!source) return { ok: false, missing: true };
+    state.fetchingSourceIds.add(sourceId);
+    try {
+      await fetchSourceOnce(sourceId, preParsed, preText);
+      return { ok: true };
+    } catch (error) {
+      // Keep the last good items visible while recording the failed attempt.
+      // The retry layer decides whether to try the source again.
+      if (state.sources.some((s) => s.id === sourceId)) {
+        source.lastError = sourceErrorMessage(error);
+        try { await storePut('sources', source); } catch (e) { /* keep retry result */ }
+        persistSourceSnapshot();
+      }
+      return { ok: false, error };
+    } finally {
+      state.fetchingSourceIds.delete(sourceId);
+    }
+  })();
+
+  state.sourceFetchPromises.set(sourceId, promise);
+  void promise.then(
+    () => { if (state.sourceFetchPromises.get(sourceId) === promise) state.sourceFetchPromises.delete(sourceId); },
+    () => { if (state.sourceFetchPromises.get(sourceId) === promise) state.sourceFetchPromises.delete(sourceId); }
+  );
+  return promise;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function refreshSourceWithRetry(sourceId) {
+  let result = { ok: false, error: new Error('Refresh failed') };
+  for (let attempt = 0; attempt < REFRESH_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await wait(REFRESH_RETRY_DELAYS_MS[attempt] || 0);
+    result = await fetchSource(sourceId);
+    if (result.ok || result.missing) return Object.assign({}, result, { attempts: attempt + 1 });
+  }
+  return Object.assign({}, result, { attempts: REFRESH_MAX_ATTEMPTS });
+}
+
+function refreshSource(sourceId) {
+  const active = state.sourceRefreshPromises.get(sourceId);
+  if (active) return active;
+  const promise = refreshSourceWithRetry(sourceId);
+  state.sourceRefreshPromises.set(sourceId, promise);
+  void promise.then(
+    () => { if (state.sourceRefreshPromises.get(sourceId) === promise) state.sourceRefreshPromises.delete(sourceId); },
+    () => { if (state.sourceRefreshPromises.get(sourceId) === promise) state.sourceRefreshPromises.delete(sourceId); }
+  );
+  return promise;
+}
+
+async function mapWithConcurrency(values, limit, worker) {
+  const results = new Array(values.length);
+  let cursor = 0;
+  async function run() {
+    while (cursor < values.length) {
+      const index = cursor++;
+      results[index] = await worker(values[index]);
+    }
+  }
+  const workers = Math.min(Math.max(1, limit), values.length);
+  await Promise.all(Array.from({ length: workers }, () => run()));
+  return results;
+}
+
+async function refreshAll(force, options = {}) {
+  if (state.fetching) return { skipped: true, succeeded: 0, failed: 0 };
+  const sourceIds = state.sources.map((source) => source.id);
+  if (!sourceIds.length) return { succeeded: 0, failed: 0 };
+
+  state.fetching = true;
+  beginRefreshFeedback();
+  try {
+    const results = await mapWithConcurrency(sourceIds, REFRESH_CONCURRENCY, (sourceId) => refreshSource(sourceId, force));
+    renderAll();
+    const succeeded = results.filter((result) => result && result.ok).length;
+    const failed = results.length - succeeded;
+    if (options.notify && failed) {
+      toast(succeeded ? 'Some sources couldn’t refresh' : 'Couldn’t refresh — check your connection');
+    }
+    return { succeeded, failed, results };
+  } finally {
+    state.fetching = false;
+    endRefreshFeedback();
   }
 }
 
-async function refreshAll(force) {
-  if (state.fetching) return;
+async function refreshOneSource(sourceId) {
+  const source = state.sources.find((candidate) => candidate.id === sourceId);
+  if (!source) return { skipped: true, succeeded: 0, failed: 0 };
+  if (state.fetching) {
+    toast('Dispatch is already refreshing');
+    return { skipped: true, succeeded: 0, failed: 0 };
+  }
+
   state.fetching = true;
+  beginRefreshFeedback();
   try {
-    await Promise.all(state.sources.map((s) => fetchSource(s.id)));
+    const result = await refreshSource(sourceId);
     renderAll();
-    if (state.sources.length && state.sources.every((s) => !!s.lastError)) {
-      toast('Couldn’t refresh — check your connection');
-    }
+    if (result.ok) toast('Updated “' + source.title + '”');
+    else toast('Couldn’t refresh “' + source.title + '”');
+    return { succeeded: result.ok ? 1 : 0, failed: result.ok ? 0 : 1, result };
   } finally {
     state.fetching = false;
+    endRefreshFeedback();
   }
 }
 
@@ -1434,14 +1548,14 @@ async function upgradeYouTubeSourceIcons() {
   const pending = state.sources.filter(needsYouTubeChannelIcon);
   if (!pending.length) return;
   let changed = false;
-  await Promise.all(pending.map(async (source) => {
+  await mapWithConcurrency(pending, 2, async (source) => {
     try {
       const image = await youtubeChannelImageFromSource(source);
       if (!image || !state.sources.some((s) => s.id === source.id)) return;
       await saveYouTubeChannelIcon(source, image);
       changed = true;
     } catch (e) { /* keep the existing fallback icon */ }
-  }));
+  });
   if (changed) renderAll();
 }
 
@@ -1474,7 +1588,7 @@ async function upgradeYouTubeSources() {
     isYouTubeSource(source) && (!isYouTubeVideosFeedUrl(source.feedUrl) || !source.youtubeShortsCheckedAt));
   if (!pending.length) return;
 
-  await Promise.all(pending.map(async (source) => {
+  await mapWithConcurrency(pending, 2, async (source) => {
     if (!state.sources.some((candidate) => candidate.id === source.id)) return;
 
     let channelId = youtubeChannelIdFromSource(source);
@@ -1491,10 +1605,11 @@ async function upgradeYouTubeSources() {
 
     const changed = canonicalizeYouTubeSource(source);
     if (!isYouTubeVideosFeedUrl(source.feedUrl) || changed) {
-      await fetchSource(source.id);
+      const fetched = await refreshSource(source.id);
+      if (!fetched.ok) return;
     }
     await purgeKnownYouTubeShorts(source);
-  }));
+  });
 }
 
 async function removeSource(id) {
@@ -1507,7 +1622,7 @@ async function removeSource(id) {
 
 /* ---------------- Rendering: strip ---------------- */
 
-const STRIP_BACK = 6, STRIP_FWD = 6, STRIP_EXTEND = 1;
+const STRIP_BACK = 6, STRIP_FWD = 2, STRIP_EXTEND = 1;
 
 function ensureStripRange() {
   const today = todayMidnight();
@@ -1649,6 +1764,119 @@ function pillLabel(item, source) {
   return destination ? 'Read on ' + destination : 'Read';
 }
 
+function initCardRefreshGesture(wrapper, card, action, source) {
+  if (!source || !source.id) return;
+  let startX = 0, startY = 0, axis = null, active = false, dx = 0;
+  let suppressClick = false;
+
+  const reset = () => {
+    wrapper.dataset.refreshGesture = '';
+    card.style.transition = '';
+    card.style.transform = '';
+    action.style.opacity = '';
+    dx = 0;
+  };
+
+  const down = (x, y, pointerId) => {
+    if (state.fetching) return;
+    startX = x;
+    startY = y;
+    axis = null;
+    active = true;
+    dx = 0;
+    if (pointerId != null) {
+      try { card.setPointerCapture(pointerId); } catch (e) { /* synthetic pointer */ }
+    }
+  };
+
+  const move = (x, y, event) => {
+    if (!active) return;
+    const mx = x - startX;
+    const my = y - startY;
+    if (!axis) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+      if (axis === 'y' || mx < 0) {
+        active = false;
+        return;
+      }
+    }
+    if (axis !== 'x') return;
+    dx = mx;
+    if (mx <= 0) {
+      wrapper.dataset.refreshGesture = '';
+      card.style.transform = 'translateX(0)';
+      action.style.opacity = '0';
+      return;
+    }
+
+    wrapper.dataset.refreshGesture = '1';
+    const reveal = Math.min(86, mx * 0.68);
+    const progress = Math.min(1, Math.max(0, (reveal - 2) / 52));
+    card.style.transition = 'none';
+    card.style.transform = 'translateX(' + reveal + 'px)';
+    action.style.opacity = String(progress);
+    if (event && event.cancelable) event.preventDefault();
+  };
+
+  const settle = (x) => {
+    if (!active) return;
+    active = false;
+    if (axis === 'x') dx = x - startX;
+    const shouldRefresh = axis === 'x' && dx >= 58;
+    if (!shouldRefresh) {
+      reset();
+      return;
+    }
+
+    suppressClick = true;
+    card.style.transition = 'transform 0.24s var(--ease)';
+    card.style.transform = 'translateX(0)';
+    action.style.opacity = '0';
+    wrapper.classList.add('card-swipe--refreshing');
+    void refreshOneSource(source.id)
+      .catch(() => {})
+      .finally(() => {
+        wrapper.classList.remove('card-swipe--refreshing');
+        reset();
+      });
+  };
+
+  card.addEventListener('touchstart', (event) => {
+    const t = event.touches && event.touches[0];
+    if (t) down(t.clientX, t.clientY, null);
+  }, { passive: true });
+  card.addEventListener('touchmove', (event) => {
+    const t = event.touches && event.touches[0];
+    if (t) move(t.clientX, t.clientY, event);
+  }, { passive: false });
+  card.addEventListener('touchend', (event) => {
+    const t = event.changedTouches && event.changedTouches[0];
+    settle(t ? t.clientX : startX);
+  });
+  card.addEventListener('touchcancel', () => { active = false; reset(); });
+
+  card.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'touch') return;
+    down(event.clientX, event.clientY, event.pointerId);
+  });
+  card.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch') return;
+    move(event.clientX, event.clientY, event);
+  });
+  card.addEventListener('pointerup', (event) => {
+    if (event.pointerType === 'touch') return;
+    settle(event.clientX);
+  });
+  card.addEventListener('pointercancel', () => { active = false; reset(); });
+  card.addEventListener('click', (event) => {
+    if (!suppressClick) return;
+    suppressClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+}
+
 function buildItemCard(item, source) {
   const card = el('a', 'card');
   card.href = cardTarget(item, source) || '#';
@@ -1702,7 +1930,15 @@ function buildItemCard(item, source) {
     '</div>' +
     body +
     '<span class="pill"><span>' + pillLabel(item, source) + '</span><span class="pill-arrow" aria-hidden="true">↗</span></span>';
-  return card;
+
+  const wrapper = el('div', 'card-swipe');
+  const action = el('div', 'card-swipe__action');
+  action.setAttribute('aria-hidden', 'true');
+  action.innerHTML = '<span class="card-swipe__icon">' + ICONS.refresh + '</span>';
+  wrapper.appendChild(action);
+  wrapper.appendChild(card);
+  initCardRefreshGesture(wrapper, card, action, source);
+  return wrapper;
 }
 
 function buildEmpty(day) {
@@ -1798,7 +2034,7 @@ function sourceTypeLabel(source) {
 
 function sourceSub(source) {
   if (state.fetchingSourceIds.has(source.id)) return sourceTypeLabel(source) + ' · fetching…';
-  if (source.lastError) return 'Error — ' + source.lastError;
+  if (source.lastError) return 'Refresh failed' + (source.lastFetchedAt ? ' · updated ' + timeAgo(source.lastFetchedAt) : '');
   if (source.lastFetchedAt) return sourceTypeLabel(source) + ' · updated ' + timeAgo(source.lastFetchedAt);
   return sourceTypeLabel(source) + ' · not fetched yet';
 }
@@ -1993,6 +2229,30 @@ function buildSourceSheet() {
 /* ---------------- Toast ---------------- */
 
 let toastTimer = null;
+let refreshStatusTimer = null;
+
+function beginRefreshFeedback() {
+  const status = $('#refresh-status');
+  const title = $('#nav-title');
+  if (!status || !title) return;
+  if (refreshStatusTimer) clearTimeout(refreshStatusTimer);
+  refreshStatusTimer = setTimeout(() => {
+    status.hidden = false;
+    title.style.opacity = '0';
+  }, 220);
+}
+
+function endRefreshFeedback() {
+  if (refreshStatusTimer) {
+    clearTimeout(refreshStatusTimer);
+    refreshStatusTimer = null;
+  }
+  const status = $('#refresh-status');
+  const title = $('#nav-title');
+  if (status) status.hidden = true;
+  if (title) title.style.opacity = '';
+}
+
 function toast(msg) {
   const t = $('#toast');
   t.textContent = msg;
@@ -2048,6 +2308,13 @@ function initSwipe() {
   };
   const onMove = (x, y, e) => {
     if (!active) return;
+    const cardGesture = e && e.target && e.target.closest && e.target.closest('.card-swipe');
+    if (cardGesture && cardGesture.dataset.refreshGesture === '1') {
+      active = false;
+      view.style.transition = 'none';
+      view.style.transform = 'translateX(0)';
+      return;
+    }
     const mx = x - startX;
     const my = y - startY;
     if (!axis) {
@@ -2112,7 +2379,6 @@ function initSwipe() {
 
 function initPullToRefresh() {
   const view = $('#dayview');
-  const indicator = $('#pull-indicator');
   let startY = 0, pulling = false, dy = 0;
 
   const onDown = (y) => {
@@ -2123,31 +2389,20 @@ function initPullToRefresh() {
     const my = y - startY;
     if (my < 0) { pulling = false; return; }
     dy = Math.min(120, my * 0.5);
-    indicator.hidden = false;
-    indicator.style.transform = 'translateY(' + dy + 'px)';
-    indicator.style.opacity = Math.min(1, dy / 70);
   };
   const end = () => {
     if (!pulling) return;
     pulling = false;
     if (dy >= 60) {
-      indicator.style.transform = 'translateY(0)';
-      indicator.style.opacity = '1';
-      indicator.hidden = false;
-      toast('Refreshing…');
-      refreshAll(true).finally(() => {
-        indicator.style.opacity = '0';
-        setTimeout(() => { indicator.hidden = true; }, 300);
+      void refreshAll(true, { notify: true }).catch(() => {
+        toast('Couldn’t refresh — check your connection');
       });
-    } else {
-      indicator.style.transform = 'translateY(0)';
-      indicator.style.opacity = '0';
-      setTimeout(() => { indicator.hidden = true; }, 300);
     }
     dy = 0;
   };
 
   view.addEventListener('touchstart', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     const t = e.touches && e.touches[0];
     if (t) onDown(t.clientY);
   }, { passive: true });
@@ -2160,6 +2415,7 @@ function initPullToRefresh() {
 
   view.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'touch') return;
+    if (e.target && e.target.closest && e.target.closest('.card-swipe')) return;
     onDown(e.clientY);
   });
   view.addEventListener('pointermove', (e) => {
@@ -2274,20 +2530,20 @@ async function maybeAutoRefresh() {
   const stale = state.sources.some((s) =>
     !s.lastFetchedAt || (now - new Date(s.lastFetchedAt).getTime()) > STALE_OPEN_MS);
   if (stale && !state.fetching) {
-    await refreshAll();
-    toast('Dispatch refreshed');
+    return refreshAll(false, { notify: false });
   }
+  return { succeeded: 0, failed: 0 };
 }
 
 function initAutoRefresh() {
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) maybeAutoRefresh();
+    if (!document.hidden) void maybeAutoRefresh().catch(() => {});
   });
   setInterval(() => {
     const now = Date.now();
     const stale = state.sources.some((s) =>
       !s.lastFetchedAt || (now - new Date(s.lastFetchedAt).getTime()) > STALE_IDLE_MS);
-    if (stale && !state.fetching) refreshAll();
+    if (stale && !state.fetching) void refreshAll(false, { notify: false }).catch(() => {});
   }, 30 * 60000);
 }
 
@@ -2323,7 +2579,7 @@ async function init() {
     upgradeYouTubeSourceIcons(),
     upgradeMissingArticleImages(),
     upgradeYouTubeSources(),
-  ]).then(() => maybeAutoRefresh()).catch(() => maybeAutoRefresh());
+  ]).then(() => maybeAutoRefresh()).catch(() => maybeAutoRefresh()).catch(() => {});
 
   // keyboard: day navigation, ESC to close overlays
   document.addEventListener('keydown', (e) => {
