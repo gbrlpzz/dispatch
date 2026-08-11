@@ -325,6 +325,10 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   will-change: transform, opacity;
 }
 
+/* Incremental refreshes give newly arrived items a slightly longer,
+   quieter entrance than the initial day render. */ 
+.card--incoming { animation-duration: 0.62s; }
+
 .card-media {
   margin: -0.82rem -0.82rem 0.71rem;
   aspect-ratio: 16 / 9;

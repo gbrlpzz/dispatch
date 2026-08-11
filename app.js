@@ -332,13 +332,106 @@ function flattenDayCache() {
   for (const items of state.dayCache.values()) state.items.push(...items);
 }
 
-function invalidateDayCache() {
-  state.dayLoadToken++;
-  state.dayLoadPromise = null;
-  state.dayLoadKey = null;
-  state.dayCache.clear();
-  state.dayRange = null;
-  state.items = [];
+function itemIdentity(item) {
+  if (!item) return '';
+  return String(item.sourceId == null ? '' : item.sourceId) + '\u0000' +
+    String(item.guid || item.link || item.id || '');
+}
+
+function itemDataSignature(item) {
+  return JSON.stringify([
+    itemIdentity(item),
+    item.day || '',
+    item.publishedAt || '',
+    item.title || '',
+    item.author || '',
+    item.summary || '',
+    item.link || '',
+    item.audioUrl || '',
+    item.imageUrl || '',
+    item.duration || '',
+    item.kind || '',
+    !!item.youtubeShort,
+  ]);
+}
+
+function dayItemsEqual(left, right) {
+  if (left === right) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const previous = new Map(left.map((item) => [itemIdentity(item), itemDataSignature(item)]));
+  return right.every((item) => previous.get(itemIdentity(item)) === itemDataSignature(item));
+}
+
+let dayCacheSyncPromise = null;
+let dayCacheSyncQueued = false;
+
+function syncLoadedDayCache() {
+  if (!state.db || !state.dayRange) return Promise.resolve(false);
+  dayCacheSyncQueued = true;
+  if (dayCacheSyncPromise) return dayCacheSyncPromise;
+
+  const run = (async () => {
+    let changedAny = false;
+    do {
+      dayCacheSyncQueued = false;
+      const range = { start: state.dayRange.start, end: state.dayRange.end };
+      let rows;
+      try {
+        rows = await storeGetByDayRange(range.start, range.end);
+      } catch (e) {
+        return changedAny;
+      }
+
+      // Navigation can replace the active window while this read is in
+      // flight. Re-run against the new range instead of mixing the two.
+      if (!state.dayRange ||
+          state.dayRange.start !== range.start ||
+          state.dayRange.end !== range.end) {
+        dayCacheSyncQueued = true;
+        continue;
+      }
+
+      const grouped = new Map();
+      for (const row of rows) {
+        if (!grouped.has(row.day)) grouped.set(row.day, []);
+        grouped.get(row.day).push(row);
+      }
+
+      let changed = false;
+      for (const key of dayKeysBetween(fromDayKey(range.start), fromDayKey(range.end))) {
+        const previous = state.dayCache.get(key);
+        if (previous === undefined) continue;
+        const next = grouped.get(key) || [];
+        if (!dayItemsEqual(previous, next)) {
+          state.dayCache.set(key, next);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        flattenDayCache();
+        renderDayIncremental();
+        scheduleMediaPreload();
+        changedAny = true;
+      }
+    } while (dayCacheSyncQueued);
+    return changedAny;
+  })();
+
+  dayCacheSyncPromise = run;
+  void run.then(
+    () => {
+      if (dayCacheSyncPromise !== run) return;
+      dayCacheSyncPromise = null;
+      if (dayCacheSyncQueued) void syncLoadedDayCache();
+    },
+    () => {
+      if (dayCacheSyncPromise !== run) return;
+      dayCacheSyncPromise = null;
+      dayCacheSyncQueued = false;
+    }
+  );
+  return run;
 }
 
 async function loadDayWindow(center, token) {
@@ -1048,8 +1141,8 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
 
   try {
     await storeBulkPut('items', updates);
-    invalidateDayCache();
-    renderAll();
+    await syncLoadedDayCache();
+    renderDayIncremental();
   } catch (e) { /* keep the feed usable even if image enrichment cannot persist */ }
 }
 
@@ -1112,7 +1205,8 @@ async function saveYouTubeChannelIcon(source, image) {
   source.iconUrl = image;
   await storePut('sources', source);
   persistSourceSnapshot();
-  renderAll();
+  renderSourcesList();
+  renderDayIncremental();
 }
 
 async function youtubeChannelImageFromSource(source) {
@@ -1458,7 +1552,8 @@ async function addSource(rawUrl) {
   state.sources.push(source);
   persistSourceSnapshot();
   state.fetchingSourceIds.add(source.id);
-  renderAll();
+  renderSourcesList();
+  renderDayIncremental();
   void hydrateSource(source, resolved);
   return source;
 }
@@ -1529,7 +1624,8 @@ async function hydrateSource(source, resolved) {
   } finally {
     state.fetchingSourceIds.delete(source.id);
   }
-  renderAll();
+  renderSourcesList();
+  renderDayIncremental();
 }
 
 async function fetchSourceOnce(sourceId, preParsed, preText) {
@@ -1608,9 +1704,11 @@ async function fetchSourceOnce(sourceId, preParsed, preText) {
       await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
     }
 
-    // Keep the archive in IndexedDB, but rebuild only the active day window on
-    // the next render so refreshes do not pull the whole history into memory.
-    invalidateDayCache();
+    // Keep the archive in IndexedDB and reconcile the already-loaded window in
+    // the background. The visible day cache is never cleared during refresh.
+
+
+    if (toPut.length) await syncLoadedDayCache();
 
     source.lastFetchedAt = now;
     source.lastError = null;
@@ -1648,6 +1746,8 @@ function fetchSource(sourceId, preParsed, preText) {
       return { ok: false, error };
     } finally {
       state.fetchingSourceIds.delete(sourceId);
+      renderSourcesList();
+      renderDayIncremental();
     }
   })();
 
@@ -1708,7 +1808,8 @@ async function refreshAll(force, options = {}) {
   beginRefreshFeedback();
   try {
     const results = await mapWithConcurrency(sourceIds, REFRESH_CONCURRENCY, (sourceId) => refreshSource(sourceId, force));
-    renderAll();
+    renderSourcesList();
+    renderDayIncremental();
     const succeeded = results.filter((result) => result && result.ok).length;
     const failed = results.length - succeeded;
     if (options.notify && failed) {
@@ -1733,7 +1834,8 @@ async function refreshOneSource(sourceId) {
   beginRefreshFeedback();
   try {
     const result = await refreshSource(sourceId);
-    renderAll();
+    renderSourcesList();
+    renderDayIncremental();
     if (result.ok) toast('Updated “' + source.title + '”');
     else toast('Couldn’t refresh “' + source.title + '”');
     return { succeeded: result.ok ? 1 : 0, failed: result.ok ? 0 : 1, result };
@@ -1755,7 +1857,10 @@ async function upgradeYouTubeSourceIcons() {
       changed = true;
     } catch (e) { /* keep the existing fallback icon */ }
   });
-  if (changed) renderAll();
+  if (changed) {
+    renderSourcesList();
+    renderDayIncremental();
+  }
 }
 
 async function purgeKnownYouTubeShorts(source) {
@@ -1773,12 +1878,15 @@ async function purgeKnownYouTubeShorts(source) {
       .map((item) => item.id);
     if (drop.length) {
       await deleteItemsByIds(drop);
-      invalidateDayCache();
+      await syncLoadedDayCache();
     }
     source.youtubeShortsCheckedAt = new Date().toISOString();
     await storePut('sources', source);
     persistSourceSnapshot();
-    if (drop.length) renderAll();
+    if (drop.length) {
+      renderSourcesList();
+      renderDayIncremental();
+    }
   } catch (e) { /* the Videos playlist is already the primary filter */ }
 }
 
@@ -1814,9 +1922,10 @@ async function upgradeYouTubeSources() {
 async function removeSource(id) {
   await deleteSourceCascade(id);
   state.sources = state.sources.filter((s) => s.id !== id);
-  invalidateDayCache();
+  await syncLoadedDayCache();
   persistSourceSnapshot();
-  renderAll();
+  renderSourcesList();
+  renderDayIncremental();
 }
 
 /* ---------------- Rendering: strip ---------------- */
@@ -1967,8 +2076,20 @@ function pillLabel(item, source) {
   return destination ? 'Read on ' + destination : 'Read';
 }
 
+function itemRenderKey(item, source) {
+  return JSON.stringify([
+    itemDataSignature(item),
+    source ? source.title || '' : '',
+    source ? source.iconUrl || '' : '',
+    source ? source.itunesUrl || '' : '',
+    source ? source.siteUrl || '' : '',
+  ]);
+}
+
 function buildItemCard(item, source) {
   const card = el('article', 'card');
+  card.dataset.itemKey = itemIdentity(item);
+  card.dataset.renderKey = itemRenderKey(item, source);
   const targetUrl = cardTarget(item, source) || '#';
   const actionLabel = pillLabel(item, source);
 
@@ -2060,15 +2181,98 @@ function buildAppCredit() {
   return footer;
 }
 
+function visibleDayItems(cached) {
+  if (!cached) return [];
+  const seen = new Set();
+  return cached
+    .filter((item) => !isFilteredYouTubeItem(item))
+    .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
+    .filter((item) => {
+      const key = itemIdentity(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function animateDayReflow(before) {
+  if (prefersReducedMotion()) return;
+  const view = $('#dayview');
+  const cards = view.querySelectorAll('.card[data-item-key]');
+  for (const card of cards) {
+    const previous = before.get(card.dataset.itemKey);
+    if (!previous) continue;
+    const current = card.getBoundingClientRect();
+    const delta = previous.top - current.top;
+    if (Math.abs(delta) < 1) continue;
+    card.style.transition = 'none';
+    card.style.transform = 'translateY(' + delta + 'px)';
+    requestAnimationFrame(() => {
+      card.style.transition = 'transform 0.56s var(--spring)';
+      card.style.transform = 'translateY(0)';
+      setTimeout(() => {
+        card.style.transition = '';
+        card.style.transform = '';
+      }, motionDelay(620));
+    });
+  }
+}
+
+function renderDayIncremental() {
+  const day = state.day;
+  const key = dayKey(day);
+  const cached = state.dayCache.get(key);
+  if (cached === undefined) return;
+
+  const view = $('#dayview');
+  if (!view) return;
+  const items = visibleDayItems(cached);
+  const srcById = new Map(state.sources.map((s) => [s.id, s]));
+  const before = new Map(
+    [...view.querySelectorAll('.card[data-item-key]')]
+      .map((card) => [card.dataset.itemKey, card.getBoundingClientRect()])
+  );
+  const existing = new Map(
+    [...view.querySelectorAll('.card[data-item-key]')]
+      .map((card) => [card.dataset.itemKey, card])
+  );
+  const footer = view.querySelector('.app-footer') || buildAppCredit();
+  view.appendChild(footer);
+
+  for (const card of existing.values()) {
+    if (!items.some((item) => itemIdentity(item) === card.dataset.itemKey)) card.remove();
+  }
+  view.querySelectorAll('.empty').forEach((empty) => empty.remove());
+
+  if (!items.length) {
+    view.insertBefore(buildEmpty(day), footer);
+  } else {
+    for (const item of items) {
+      const source = srcById.get(item.sourceId);
+      let card = existing.get(itemIdentity(item));
+      if (!card) {
+        card = buildItemCard(item, source);
+        card.classList.add('card--incoming');
+      } else if (card.dataset.renderKey !== itemRenderKey(item, source)) {
+        const fresh = buildItemCard(item, source);
+        card.innerHTML = fresh.innerHTML;
+        card.dataset.renderKey = fresh.dataset.renderKey;
+      }
+      view.insertBefore(card, footer);
+    }
+  }
+
+  view.appendChild(footer);
+  animateDayReflow(before);
+  $('#nav-title').textContent = navTitle(day);
+}
+
 function renderDay() {
   const day = state.day;
   const key = dayKey(day);
   const view = $('#dayview');
   const cached = state.dayCache.get(key);
-  const items = cached
-    ? cached.filter((i) => !isFilteredYouTubeItem(i))
-      .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
-    : [];
+  const items = visibleDayItems(cached);
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
 
   const frag = document.createDocumentFragment();
@@ -2806,8 +3010,8 @@ async function init() {
   if (!state.sources.length) {
     state.sources = await restoreSourcesFromSnapshot();
   }
-  // Do not pull the complete archive into memory at startup. The durable
-  // IndexedDB archive is queried for the recent week plus the next two days.
+  // Do not pull the complete archive into memory. The durable IndexedDB
+  // archive is queried for the previous week and today only.
   state.items = [];
   await requestDayWindow(state.day, false);
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
