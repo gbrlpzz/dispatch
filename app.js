@@ -197,11 +197,22 @@ function motionDelay(ms) {
 
 function syncAppInert() {
   const app = $('#app');
-  if (!app) return;
-  const blocked = !sheetEl().hidden || !sourcesScreenEl().hidden;
-  app.inert = blocked;
-  if (blocked) app.setAttribute('inert', '');
-  else app.removeAttribute('inert');
+  const sources = sourcesScreenEl();
+  const sheetOpen = !sheetEl().hidden;
+  const sourcesOpen = !sources.hidden;
+  const blocked = sheetOpen || sourcesOpen;
+
+  if (app) {
+    app.inert = blocked;
+    if (blocked) app.setAttribute('inert', '');
+    else app.removeAttribute('inert');
+  }
+
+  // A sheet opened from the Sources screen is a modal above that screen too.
+  // Keep the underlying list out of the focus order until the sheet closes.
+  sources.inert = sheetOpen;
+  if (sheetOpen) sources.setAttribute('inert', '');
+  else sources.removeAttribute('inert');
 }
 
 /* ---------------- IndexedDB ---------------- */
@@ -2659,13 +2670,14 @@ function buildSheet(mode) {
   const body = $('#sheet-body');
   body.innerHTML = '';
   if (mode === 'source') return buildSourceSheet();
+  if (mode === 'info') return buildInfoSheet();
 }
 
 function sheetNav(title, actionLabel, onAction, actionEnabled) {
   const nav = el('div', 'sheet-nav');
   nav.innerHTML =
     '<button class="nav-btn" data-sheet-cancel>Cancel</button>' +
-    '<h2>' + esc(title) + '</h2>' +
+    '<h2 id="sheet-title">' + esc(title) + '</h2>' +
     '<button class="nav-btn nav-btn--icon nav-btn--disabled" data-sheet-action disabled>' + esc(actionLabel) + '</button>';
   nav.querySelector('[data-sheet-cancel]').addEventListener('click', closeSheet);
   const action = nav.querySelector('[data-sheet-action]');
@@ -2689,6 +2701,34 @@ function fieldRow(icon, placeholder, inputAttrs) {
   for (const [k, v] of Object.entries(inputAttrs || {})) input.setAttribute(k, v);
   wrap.appendChild(input);
   return { wrap, input };
+}
+
+const FEEDBACK_URL = 'https://github.com/gbrlpzz/dispatch/issues/new?title=Dispatch%20feedback&body=What%20would%20you%20like%20to%20share%3F%0A%0ADevice%20and%20browser%20(optional)%3A%0A';
+
+function buildInfoSheet() {
+  const body = $('#sheet-body');
+  body.innerHTML = '';
+
+  const nav = el('div', 'sheet-nav');
+  nav.innerHTML =
+    '<button class="nav-btn" data-sheet-cancel>Close</button>' +
+    '<h2 id="sheet-title">About Dispatch</h2>' +
+    '<span class="sheet-nav__balance" aria-hidden="true"></span>';
+  nav.querySelector('[data-sheet-cancel]').addEventListener('click', closeSheet);
+
+  const content = el('div', 'info-sheet');
+  content.innerHTML =
+    '<img class="info-sheet__logo" src="icons/favicon.svg" alt="" />' +
+    '<h3>Dispatch</h3>' +
+    '<p class="info-sheet__lede">A quiet daily reader for the sources you choose.</p>' +
+    '<p class="info-sheet__note">Your sources and reading history stay on this device.</p>' +
+    '<a class="pill info-sheet__feedback" href="' + esc(FEEDBACK_URL) + '" target="_blank" rel="noopener noreferrer">' +
+      '<span>Send feedback</span><span class="pill-arrow" aria-hidden="true">↗</span>' +
+    '</a>';
+
+  body.appendChild(nav);
+  body.appendChild(content);
+  nav.querySelector('[data-sheet-cancel]').focus();
 }
 
 function buildSourceSheet() {
@@ -3084,6 +3124,7 @@ function initNav() {
   $('#backdrop').addEventListener('click', closeSheet);
 
   $('#sources-add').addEventListener('click', () => openSheet('source'));
+  $('#sources-info').addEventListener('click', () => openSheet('info'));
 }
 
 /* ---------------- Auto refresh ---------------- */
