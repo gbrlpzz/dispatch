@@ -2725,7 +2725,7 @@ function buildInfoSheet() {
     '<a class="pill info-sheet__feedback" href="' + esc(FEEDBACK_URL) + '" target="_blank" rel="noopener noreferrer">' +
       '<span>Send feedback</span><span class="pill-arrow" aria-hidden="true">↗</span>' +
     '</a>' +
-    '<p class="info-sheet__credit">Developed by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">gbrlpzz</a>.</p>';
+    '<p class="info-sheet__credit">Developed by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">Gabriele Pizzi</a>.</p>';
 
   body.appendChild(nav);
   body.appendChild(content);
