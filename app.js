@@ -142,6 +142,9 @@ const state = {
   dayLoadKey: null,
   dayLoadToken: 0,
   renderedDayKey: null,
+  // Keep the first network pass visually quiet: cached content should settle
+  // before later refreshes are allowed to animate list displacement.
+  startupRefreshActive: true,
   // A source can be touched by the initial hydrator, an automatic refresh,
   // or a source-list action. Keep both the single fetch and the retrying
   // refresh operation deduplicated so those paths never race each other.
@@ -2258,6 +2261,7 @@ function renderDayIncremental() {
     [...view.querySelectorAll('.card[data-item-key]')]
       .map((card) => [card.dataset.itemKey, card])
   );
+  let insertedCount = 0;
   const footer = view.querySelector('.app-footer') || buildAppCredit();
   view.appendChild(footer);
 
@@ -2273,8 +2277,11 @@ function renderDayIncremental() {
       const source = srcById.get(item.sourceId);
       let card = existing.get(itemIdentity(item));
       if (!card) {
+        insertedCount++;
         card = buildItemCard(item, source);
-        card.classList.add('card--incoming');
+        // Keep the initial network reconciliation quiet. Later background
+        // additions can animate once the launch pass has settled.
+        if (!state.startupRefreshActive) card.classList.add('card--incoming');
       } else if (card.dataset.renderKey !== itemRenderKey(item, source)) {
         const fresh = buildItemCard(item, source);
         card.innerHTML = fresh.innerHTML;
@@ -2285,7 +2292,7 @@ function renderDayIncremental() {
   }
 
   view.appendChild(footer);
-  animateDayReflow(before);
+  if (insertedCount && !state.startupRefreshActive) animateDayReflow(before);
   state.renderedDayKey = key;
   $('#nav-title').textContent = navTitle(day);
 }
@@ -2334,11 +2341,7 @@ function renderAll(options = {}) {
 
 function dismissBootScreen() {
   const boot = $('#boot-screen');
-  if (!boot) return;
-  requestAnimationFrame(() => {
-    boot.classList.add('boot-screen--hidden');
-    setTimeout(() => boot.remove(), motionDelay(430));
-  });
+  if (boot) boot.remove();
 }
 
 /* ---------------- Rendering: sources screen ---------------- */
@@ -3058,10 +3061,14 @@ async function init() {
   // Always begin a fresh network pass on app load. It starts while the boot
   // screen is still present, but cached local content is rendered immediately
   // so a slow or unavailable network never becomes a blank-screen blocker.
-  const initialRefresh = refreshAll(true, { notify: false }).catch(() => ({
-    succeeded: 0,
-    failed: state.sources.length,
-  }));
+  const initialRefresh = refreshAll(true, { notify: false })
+    .catch(() => ({
+      succeeded: 0,
+      failed: state.sources.length,
+    }))
+    .finally(() => {
+      state.startupRefreshActive = false;
+    });
   renderAll();
   dismissBootScreen();
   void Promise.all([
