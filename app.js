@@ -2703,6 +2703,7 @@ function fieldRow(icon, placeholder, inputAttrs) {
   return { wrap, input };
 }
 
+const APP_VERSION = '1.0.0';
 const FEEDBACK_URL = 'https://github.com/gbrlpzz/dispatch/issues/new?title=Dispatch%20feedback&body=What%20would%20you%20like%20to%20share%3F%0A%0ADevice%20and%20browser%20(optional)%3A%0A';
 
 function buildInfoSheet() {
@@ -2725,7 +2726,8 @@ function buildInfoSheet() {
     '<a class="pill info-sheet__feedback" href="' + esc(FEEDBACK_URL) + '" target="_blank" rel="noopener noreferrer">' +
       '<span>Send feedback</span><span class="pill-arrow" aria-hidden="true">↗</span>' +
     '</a>' +
-    '<p class="info-sheet__credit">Developed by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">Gabriele Pizzi</a>.</p>';
+    '<p class="info-sheet__credit">Developed by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">Gabriele Pizzi</a>.</p>' +
+    '<p class="info-sheet__version">Version ' + esc(APP_VERSION) + '</p>';
 
   body.appendChild(nav);
   body.appendChild(content);
