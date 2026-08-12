@@ -646,6 +646,19 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   text-decoration: none;
 }
 .info-sheet__feedback:active { opacity: 0.8; }
+.info-sheet__credit {
+  margin-top: 1rem;
+  color: var(--tertiary);
+  font-size: 0.765rem;
+  line-height: 1.4;
+}
+.info-sheet__credit a {
+  color: var(--secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--fill-strong);
+  text-underline-offset: 2px;
+}
+.info-sheet__credit a:active { opacity: 0.55; }
 
 .field-label {
   font-size: 0.765rem;
