@@ -23,10 +23,6 @@
   --fill-strong: rgba(0, 0, 0, 0.14);
   --accent: #000000;
   --accent-text: #ffffff;
-  --nav-bg: rgba(245, 245, 247, 0.12);
-  --nav-height: calc(44px + env(safe-area-inset-top));
-  --strip-height: calc(64px + 0.59rem + 0.71rem);
-  --chrome-height: calc(var(--nav-height) + var(--strip-height));
   --error: #d70015;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -14px rgba(0, 0, 0, 0.16);
   --radius-card: 16px;
@@ -51,7 +47,6 @@
     --fill-strong: rgba(255, 255, 255, 0.20);
     --accent: #ffffff;
     --accent-text: #000000;
-    --nav-bg: rgba(0, 0, 0, 0.16);
     --error: #ff6961;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -14px rgba(0, 0, 0, 0.6);
   }
@@ -111,7 +106,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-#app { height: 100%; position: relative; }
+#app { height: 100%; display: flex; flex-direction: column; }
 
 /* ---------------- Initial boot signal ---------------- */
 
@@ -170,50 +165,17 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 
 /* ---------------- Navigation bar (44pt + safe area) ---------------- */
 
-#top-chrome {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  min-height: var(--chrome-height);
-  background: transparent;
-  pointer-events: none;
-}
-#top-chrome::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 -18px;
-  z-index: -1;
-  background: var(--nav-bg);
-  -webkit-backdrop-filter: blur(14px) saturate(130%);
-  backdrop-filter: blur(14px) saturate(130%);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 68%,
-    rgba(0, 0, 0, 0.72) 82%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 68%,
-    rgba(0, 0, 0, 0.72) 82%,
-    transparent 100%
-  );
-  pointer-events: none;
-}
-#top-chrome > * { pointer-events: auto; }
-
 #navbar {
+  flex: none;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: var(--nav-height);
+  min-height: calc(44px + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 4px 0;
-  background: transparent;
+  background: var(--bg);
+  border-bottom: 0.5px solid var(--separator);
+  z-index: 10;
 }
 
 .nav-btn {
@@ -290,17 +252,14 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 /* ---------------- Day bubble strip ---------------- */
 
 #strip {
-  position: relative;
-  display: flex;
   flex: none;
-  height: var(--strip-height);
+  display: flex;
   gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
   /* Spotlight carousel: the strip is padded so any date can reach the
      centre, and every bubble snaps to that fixed centre. */
   padding: 0.59rem calc(50% - 32px) 0.71rem;
-  background: transparent;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
   scroll-snap-type: x mandatory;
@@ -333,9 +292,10 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 /* ---------------- Day pager & content ---------------- */
 
 #pager {
-  position: absolute;
-  inset: 0;
+  flex: 1;
+  position: relative;
   overflow: hidden;
+  min-height: 0;
   touch-action: pan-y;
 }
 
@@ -346,7 +306,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: calc(var(--chrome-height) + 0.82rem) 0 calc(28px + env(safe-area-inset-bottom));   /* 14pt top */
+  padding: 0.82rem 0 calc(28px + env(safe-area-inset-bottom));   /* 14pt top */
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -751,35 +711,21 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   flex-direction: column;
   transform: translateX(0);
   transition: transform 0.46s var(--ease);
-  padding-top: 0;
+  padding-top: env(safe-area-inset-top);
 }
 #sources-screen[hidden] { display: flex; transform: translateX(100%); pointer-events: none; }
 #sources-screen:focus { outline: none; }
 
 .screen-nav {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 2;
+  flex: none;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: var(--nav-height);
-  padding: env(safe-area-inset-top) 4px 0;
-  background: transparent;
-}
-.screen-nav::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 -14px;
-  z-index: -1;
-  background: var(--nav-bg);
-  -webkit-backdrop-filter: blur(14px) saturate(130%);
-  backdrop-filter: blur(14px) saturate(130%);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 62%, transparent 100%);
-  pointer-events: none;
+  min-height: 44px;
+  padding: 0 4px;
+  background: var(--bg);
+  border-bottom: 0.5px solid var(--separator);
 }
 .screen-nav__actions {
   display: flex;
@@ -811,7 +757,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: calc(var(--nav-height) + 1.18rem) 16px 0.71rem;        /* 20/12pt */
+  padding: 1.18rem 16px 0.71rem;        /* 20/12pt */
   overscroll-behavior-y: contain;
 }
 
