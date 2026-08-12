@@ -4,7 +4,7 @@
    the network. */
 'use strict';
 
-const VERSION = 'dispatch-v37';
+const VERSION = 'dispatch-v38';
 const SHELL = [
   './',
   './index.html',
