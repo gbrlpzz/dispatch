@@ -540,7 +540,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   background: rgba(0, 0, 0, 0.4);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
-  z-index: 40;
+  z-index: 48;
   opacity: 1;
   transition: opacity 0.42s var(--ease);
 }
