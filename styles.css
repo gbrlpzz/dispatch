@@ -623,6 +623,11 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 }
 .sheet-nav h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.25px; }
 .sheet-nav .nav-btn { min-width: 68px; }
+.sheet-nav .nav-btn:focus { outline: none; }
+.sheet-nav .nav-btn:focus-visible {
+  outline: 3px solid var(--fill-strong);
+  outline-offset: 2px;
+}
 .sheet-nav .nav-btn--disabled { opacity: 0.4; pointer-events: none; }
 .sheet-nav__balance { display: block; width: 68px; min-width: 68px; }
 
