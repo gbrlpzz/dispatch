@@ -2724,7 +2724,8 @@ function buildInfoSheet() {
     '<p class="info-sheet__note">Your sources and reading history stay on this device.</p>' +
     '<a class="pill info-sheet__feedback" href="' + esc(FEEDBACK_URL) + '" target="_blank" rel="noopener noreferrer">' +
       '<span>Send feedback</span><span class="pill-arrow" aria-hidden="true">↗</span>' +
-    '</a>';
+    '</a>' +
+    '<p class="info-sheet__credit">Developed by <a href="https://gbrlpzz.com/" target="_blank" rel="noopener noreferrer">gbrlpzz</a>.</p>';
 
   body.appendChild(nav);
   body.appendChild(content);
