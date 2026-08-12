@@ -469,12 +469,17 @@ function syncLoadedDayCache(removeMissing = false) {
   return run;
 }
 
-async function loadDayWindow(center, token) {
+async function loadDayWindow(center, token, options = {}) {
   if (!state.db) return;
 
   const safeCenter = center > todayMidnight() ? todayMidnight() : center;
-  const start = addDays(safeCenter, -DAY_PRELOAD_BACK);
-  const end = addDays(safeCenter, DAY_BUFFER);
+  const preloadBack = Math.max(0, Number(options.preloadBack ?? DAY_PRELOAD_BACK) || 0);
+  const preloadForward = Math.max(
+    0,
+    Math.min(DAY_BUFFER, Number(options.preloadForward ?? DAY_BUFFER) || 0)
+  );
+  const start = addDays(safeCenter, -preloadBack);
+  const end = addDays(safeCenter, preloadForward);
   const wanted = dayKeysBetween(start, end);
   const missing = wanted.filter((key) => !state.dayCache.has(key));
 
@@ -503,14 +508,20 @@ async function loadDayWindow(center, token) {
   scheduleMediaPreload();
 }
 
-function requestDayWindow(center, renderWhenReady = true) {
+function requestDayWindow(center, renderWhenReady = true, options = {}) {
   const safeCenter = center > todayMidnight() ? todayMidnight() : center;
   const targetKey = dayKey(safeCenter);
-  if (state.dayLoadPromise && state.dayLoadKey === targetKey) return state.dayLoadPromise;
+  const preloadBack = Math.max(0, Number(options.preloadBack ?? DAY_PRELOAD_BACK) || 0);
+  const preloadForward = Math.max(
+    0,
+    Math.min(DAY_BUFFER, Number(options.preloadForward ?? DAY_BUFFER) || 0)
+  );
+  const loadKey = targetKey + '|' + preloadBack + '|' + preloadForward;
+  if (state.dayLoadPromise && state.dayLoadKey === loadKey) return state.dayLoadPromise;
 
   const token = ++state.dayLoadToken;
-  state.dayLoadKey = targetKey;
-  const promise = loadDayWindow(safeCenter, token)
+  state.dayLoadKey = loadKey;
+  const promise = loadDayWindow(safeCenter, token, { preloadBack, preloadForward })
     .then(() => {
       if (renderWhenReady && token === state.dayLoadToken && dayKey(state.day) === targetKey) renderDay();
     })
@@ -3077,6 +3088,20 @@ function initNav() {
 
 /* ---------------- Auto refresh ---------------- */
 
+function scheduleDayPreload() {
+  setTimeout(() => {
+    const start = () => {
+      void requestDayWindow(state.day, false, { preloadBack: DAY_PRELOAD_BACK })
+        .catch(() => {});
+    };
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(start, { timeout: 1800 });
+    } else {
+      setTimeout(start, 0);
+    }
+  }, BACKGROUND_REFRESH_DELAY_MS + 150);
+}
+
 function scheduleBackgroundRefresh(
   delay = BACKGROUND_REFRESH_DELAY_MS,
   force = false,
@@ -3155,7 +3180,9 @@ async function init() {
   // Do not pull the complete archive into memory. The durable IndexedDB
   // archive is queried for the previous week and today only.
   state.items = [];
-  await requestDayWindow(state.day, false);
+  // Hydrate only the visible day before the first paint. The previous
+  // seven days are read from IndexedDB in the background immediately after.
+  await requestDayWindow(state.day, false, { preloadBack: 0 });
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
   persistSourceSnapshot();
 
@@ -3170,6 +3197,7 @@ async function init() {
   // scheduled after that frame, so opening Dispatch never waits for feeds.
   renderAll();
   dismissBootScreen();
+  scheduleDayPreload();
   scheduleBackgroundRefresh(BACKGROUND_REFRESH_DELAY_MS, true, true);
   scheduleBackgroundEnrichment();
 
