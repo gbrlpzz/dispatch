@@ -83,9 +83,17 @@
     <header class="screen-nav">
       <button id="sources-done" class="nav-btn">Done</button>
       <h2 id="sources-title">Sources</h2>
-      <button id="sources-add" class="nav-btn nav-btn--icon" aria-label="Add source">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
+      <div class="screen-nav__actions">
+        <button id="sources-info" class="nav-btn nav-btn--icon screen-nav__info" aria-label="About Dispatch and send feedback" title="About Dispatch">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M12 11v5M12 8.2h.01" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button id="sources-add" class="nav-btn nav-btn--icon" aria-label="Add source" title="Add source">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
     </header>
     <div id="sources-list"></div>
       </section>
