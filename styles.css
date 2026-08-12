@@ -601,6 +601,51 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 .sheet-nav h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.25px; }
 .sheet-nav .nav-btn { min-width: 68px; }
 .sheet-nav .nav-btn--disabled { opacity: 0.4; pointer-events: none; }
+.sheet-nav__balance { display: block; width: 68px; min-width: 68px; }
+
+.info-sheet {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 1.18rem 20px 1.06rem;
+}
+.info-sheet__logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  margin-bottom: 0.82rem;
+}
+.info-sheet h3 {
+  font-size: 1.176rem;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+.info-sheet__lede {
+  max-width: 300px;
+  margin-top: 0.35rem;
+  color: var(--secondary);
+  font-size: 0.882rem;
+  line-height: 1.4;
+}
+.info-sheet__note {
+  max-width: 300px;
+  margin-top: 1.06rem;
+  color: var(--tertiary);
+  font-size: 0.765rem;
+  line-height: 1.4;
+}
+.info-sheet__feedback {
+  display: flex;
+  width: min(100%, 340px);
+  justify-content: space-between;
+  margin-top: 1.18rem;
+  background: var(--accent);
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.info-sheet__feedback:active { opacity: 0.8; }
 
 .field-label {
   font-size: 0.765rem;
@@ -664,6 +709,14 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 0.5px solid var(--separator);
 }
+.screen-nav__actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+}
+.screen-nav__info { color: var(--secondary); }
+
 .screen-nav h2 {
   position: absolute;
   left: 50%;
