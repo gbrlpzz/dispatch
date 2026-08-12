@@ -145,6 +145,11 @@ const state = {
   // Keep the first network pass visually quiet: cached content should settle
   // before later refreshes are allowed to animate list displacement.
   startupRefreshActive: true,
+  // Background refresh is deliberately separate from foreground gestures:
+  // it keeps the cache warm without holding the UI or showing a spinner.
+  backgroundRefreshing: false,
+  backgroundRefreshPromise: null,
+  backgroundRefreshTimer: null,
   // A source can be touched by the initial hydrator, an automatic refresh,
   // or a source-list action. Keep both the single fetch and the retrying
   // refresh operation deduplicated so those paths never race each other.
@@ -157,7 +162,12 @@ const STALE_IDLE_MS = 24 * 3600000;
 const SOURCE_SNAPSHOT_KEY = 'dispatch.source-snapshot.v1';
 const REFRESH_MAX_ATTEMPTS = 3;
 const REFRESH_RETRY_DELAYS_MS = [0, 900, 2500];
-const REFRESH_CONCURRENCY = 2;
+const REFRESH_CONCURRENCY = 3;
+// Keep the cache warm while the app is open, but do this after the first
+// paint and only revalidate sources that have become old enough.
+const BACKGROUND_REFRESH_DELAY_MS = 450;
+const BACKGROUND_REFRESH_INTERVAL_MS = 15 * 60000;
+const BACKGROUND_REFRESH_MAX_AGE_MS = 30 * 60000;
 
 // Keep the recent week and today ready on first launch. The window slides one
 // day at a time as the selected date moves; future dates are never loaded.
@@ -459,12 +469,17 @@ function syncLoadedDayCache(removeMissing = false) {
   return run;
 }
 
-async function loadDayWindow(center, token) {
+async function loadDayWindow(center, token, options = {}) {
   if (!state.db) return;
 
   const safeCenter = center > todayMidnight() ? todayMidnight() : center;
-  const start = addDays(safeCenter, -DAY_PRELOAD_BACK);
-  const end = addDays(safeCenter, DAY_BUFFER);
+  const preloadBack = Math.max(0, Number(options.preloadBack ?? DAY_PRELOAD_BACK) || 0);
+  const preloadForward = Math.max(
+    0,
+    Math.min(DAY_BUFFER, Number(options.preloadForward ?? DAY_BUFFER) || 0)
+  );
+  const start = addDays(safeCenter, -preloadBack);
+  const end = addDays(safeCenter, preloadForward);
   const wanted = dayKeysBetween(start, end);
   const missing = wanted.filter((key) => !state.dayCache.has(key));
 
@@ -493,14 +508,20 @@ async function loadDayWindow(center, token) {
   scheduleMediaPreload();
 }
 
-function requestDayWindow(center, renderWhenReady = true) {
+function requestDayWindow(center, renderWhenReady = true, options = {}) {
   const safeCenter = center > todayMidnight() ? todayMidnight() : center;
   const targetKey = dayKey(safeCenter);
-  if (state.dayLoadPromise && state.dayLoadKey === targetKey) return state.dayLoadPromise;
+  const preloadBack = Math.max(0, Number(options.preloadBack ?? DAY_PRELOAD_BACK) || 0);
+  const preloadForward = Math.max(
+    0,
+    Math.min(DAY_BUFFER, Number(options.preloadForward ?? DAY_BUFFER) || 0)
+  );
+  const loadKey = targetKey + '|' + preloadBack + '|' + preloadForward;
+  if (state.dayLoadPromise && state.dayLoadKey === loadKey) return state.dayLoadPromise;
 
   const token = ++state.dayLoadToken;
-  state.dayLoadKey = targetKey;
-  const promise = loadDayWindow(safeCenter, token)
+  state.dayLoadKey = loadKey;
+  const promise = loadDayWindow(safeCenter, token, { preloadBack, preloadForward })
     .then(() => {
       if (renderWhenReady && token === state.dayLoadToken && dayKey(state.day) === targetKey) renderDay();
     })
@@ -1788,20 +1809,25 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function refreshSourceWithRetry(sourceId) {
+async function refreshSourceWithRetry(sourceId, maxAttempts = REFRESH_MAX_ATTEMPTS) {
+  const attempts = Math.max(1, Math.min(REFRESH_MAX_ATTEMPTS, Number(maxAttempts) || REFRESH_MAX_ATTEMPTS));
   let result = { ok: false, error: new Error('Refresh failed') };
-  for (let attempt = 0; attempt < REFRESH_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) await wait(REFRESH_RETRY_DELAYS_MS[attempt] || 0);
     result = await fetchSource(sourceId);
     if (result.ok || result.missing) return Object.assign({}, result, { attempts: attempt + 1 });
   }
-  return Object.assign({}, result, { attempts: REFRESH_MAX_ATTEMPTS });
+  return Object.assign({}, result, { attempts });
 }
 
-function refreshSource(sourceId) {
+function refreshSource(sourceId, options = {}) {
   const active = state.sourceRefreshPromises.get(sourceId);
   if (active) return active;
-  const promise = refreshSourceWithRetry(sourceId);
+  const maxAttempts = Math.max(1, Math.min(
+    REFRESH_MAX_ATTEMPTS,
+    Number(options.maxAttempts) || REFRESH_MAX_ATTEMPTS
+  ));
+  const promise = refreshSourceWithRetry(sourceId, maxAttempts);
   state.sourceRefreshPromises.set(sourceId, promise);
   void promise.then(
     () => { if (state.sourceRefreshPromises.get(sourceId) === promise) state.sourceRefreshPromises.delete(sourceId); },
@@ -1824,27 +1850,79 @@ async function mapWithConcurrency(values, limit, worker) {
   return results;
 }
 
-async function refreshAll(force, options = {}) {
-  if (state.fetching) return { skipped: true, succeeded: 0, failed: 0 };
-  const sourceIds = state.sources.map((source) => source.id);
-  if (!sourceIds.length) return { succeeded: 0, failed: 0 };
-
-  state.fetching = true;
-  beginRefreshFeedback();
-  try {
-    const results = await mapWithConcurrency(sourceIds, REFRESH_CONCURRENCY, (sourceId) => refreshSource(sourceId, force));
-    renderSourcesList();
-    renderDayIncremental();
-    const succeeded = results.filter((result) => result && result.ok).length;
-    const failed = results.length - succeeded;
-    if (options.notify && failed) {
-      toast(succeeded ? 'Some sources couldn’t refresh' : 'Couldn’t refresh — check your connection');
-    }
-    return { succeeded, failed, results };
-  } finally {
-    state.fetching = false;
-    endRefreshFeedback();
+function refreshAll(force, options = {}) {
+  const background = options.background === true;
+  if (background && state.backgroundRefreshPromise) return state.backgroundRefreshPromise;
+  if (!background && state.fetching) {
+    return Promise.resolve({ skipped: true, succeeded: 0, failed: 0 });
   }
+
+  const now = Date.now();
+  const sourceIds = state.sources
+    .filter((source) => {
+      if (!background || force) return true;
+      if (!source.lastFetchedAt) return true;
+      return now - new Date(source.lastFetchedAt).getTime() > BACKGROUND_REFRESH_MAX_AGE_MS;
+    })
+    .map((source) => source.id);
+  if (!sourceIds.length) return Promise.resolve({ succeeded: 0, failed: 0 });
+
+  const run = (async () => {
+    if (background) state.backgroundRefreshing = true;
+    else state.fetching = true;
+    if (!background) beginRefreshFeedback();
+
+    try {
+      // Give every source one quick opportunity before spending time on
+      // retries. A failed YouTube proxy must not occupy a worker while all
+      // other sources wait behind it.
+      let pendingIds = sourceIds.slice();
+      const resultsById = new Map();
+
+      for (let pass = 0; pass < REFRESH_MAX_ATTEMPTS && pendingIds.length; pass++) {
+        if (pass > 0) await wait(REFRESH_RETRY_DELAYS_MS[pass] || 0);
+        const passResults = await mapWithConcurrency(
+          pendingIds,
+          REFRESH_CONCURRENCY,
+          (sourceId) => refreshSource(sourceId, { maxAttempts: 1 })
+        );
+        passResults.forEach((result, index) => {
+          resultsById.set(pendingIds[index], result);
+        });
+        pendingIds = pendingIds.filter((sourceId) => {
+          const result = resultsById.get(sourceId);
+          return !(result && (result.ok || result.missing));
+        });
+      }
+
+      const results = sourceIds.map((sourceId) => (
+        resultsById.get(sourceId) || { ok: false, error: new Error('Refresh failed') }
+      ));
+      renderSourcesList();
+      renderDayIncremental();
+      const succeeded = results.filter((result) => result && result.ok).length;
+      const failed = results.length - succeeded;
+      if (options.notify && failed) {
+        toast(succeeded ? 'Some sources couldn’t refresh' : 'Couldn’t refresh — check your connection');
+      }
+      return { succeeded, failed, results };
+    } finally {
+      if (background) state.backgroundRefreshing = false;
+      else {
+        state.fetching = false;
+        endRefreshFeedback();
+      }
+    }
+  })();
+
+  if (background) {
+    state.backgroundRefreshPromise = run;
+    void run.then(
+      () => { if (state.backgroundRefreshPromise === run) state.backgroundRefreshPromise = null; },
+      () => { if (state.backgroundRefreshPromise === run) state.backgroundRefreshPromise = null; }
+    );
+  }
+  return run;
 }
 
 async function refreshOneSource(sourceId) {
@@ -2355,7 +2433,7 @@ function sourceTypeLabel(source) {
 }
 
 function sourceSub(source) {
-  if (state.fetchingSourceIds.has(source.id)) return sourceTypeLabel(source) + ' · fetching…';
+  if (state.fetchingSourceIds.has(source.id)) return sourceTypeLabel(source) + ' · updating…';
   if (source.lastError) return 'Refresh failed' + (source.lastFetchedAt ? ' · updated ' + timeAgo(source.lastFetchedAt) : '');
   if (source.lastFetchedAt) return sourceTypeLabel(source) + ' · updated ' + timeAgo(source.lastFetchedAt);
   return sourceTypeLabel(source) + ' · not fetched yet';
@@ -3010,26 +3088,81 @@ function initNav() {
 
 /* ---------------- Auto refresh ---------------- */
 
+function scheduleDayPreload() {
+  setTimeout(() => {
+    const start = () => {
+      void requestDayWindow(state.day, false, { preloadBack: DAY_PRELOAD_BACK })
+        .catch(() => {});
+    };
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(start, { timeout: 1800 });
+    } else {
+      setTimeout(start, 0);
+    }
+  }, BACKGROUND_REFRESH_DELAY_MS + 150);
+}
+
+function scheduleBackgroundRefresh(
+  delay = BACKGROUND_REFRESH_DELAY_MS,
+  force = false,
+  startup = false
+) {
+  if (state.backgroundRefreshTimer) return;
+  state.backgroundRefreshTimer = setTimeout(() => {
+    state.backgroundRefreshTimer = null;
+    const start = () => {
+      const promise = refreshAll(force, { notify: false, background: true });
+      if (startup) {
+        void promise.then(
+          () => { state.startupRefreshActive = false; },
+          () => { state.startupRefreshActive = false; }
+        );
+      }
+    };
+
+    // requestIdleCallback lets the first cached frame, scrolling and input
+    // win over network parsing. Safari gets the timer fallback.
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(start, { timeout: Math.max(1000, delay + 1200) });
+    } else {
+      setTimeout(start, 0);
+    }
+  }, Math.max(0, delay));
+}
+
+function scheduleBackgroundEnrichment() {
+  setTimeout(() => {
+    const refresh = state.backgroundRefreshPromise || Promise.resolve();
+    void refresh
+      .catch(() => {})
+      .then(() => upgradeYouTubeSources())
+      .then(() => upgradeYouTubeSourceIcons())
+      .then(() => upgradeMissingArticleImages())
+      .catch(() => {});
+  }, 3500);
+}
+
 async function maybeAutoRefresh() {
   const now = Date.now();
-  const stale = state.sources.some((s) =>
-    !s.lastFetchedAt || (now - new Date(s.lastFetchedAt).getTime()) > STALE_OPEN_MS);
-  if (stale && !state.fetching) {
-    return refreshAll(false, { notify: false });
+  const stale = state.sources.some((source) =>
+    !source.lastFetchedAt ||
+    (now - new Date(source.lastFetchedAt).getTime()) > BACKGROUND_REFRESH_MAX_AGE_MS
+  );
+  if (stale && !state.fetching && !state.backgroundRefreshing) {
+    return refreshAll(false, { notify: false, background: true });
   }
   return { succeeded: 0, failed: 0 };
 }
 
 function initAutoRefresh() {
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void maybeAutoRefresh().catch(() => {});
-  });
+  const resume = () => {
+    if (!document.hidden) scheduleBackgroundRefresh(250);
+  };
+  document.addEventListener('visibilitychange', resume);
+  window.addEventListener('online', resume);
   setInterval(() => {
-    const now = Date.now();
-    const stale = state.sources.some((s) =>
-      !s.lastFetchedAt || (now - new Date(s.lastFetchedAt).getTime()) > STALE_IDLE_MS);
-    if (stale && !state.fetching) void refreshAll(false, { notify: false }).catch(() => {});
-  }, 30 * 60000);
+    if (!document.hidden) scheduleBackgroundRefresh(0);
+  }, BACKGROUND_REFRESH_INTERVAL_MS);
 }
 
 /* ---------------- Boot ---------------- */
@@ -3047,7 +3180,9 @@ async function init() {
   // Do not pull the complete archive into memory. The durable IndexedDB
   // archive is queried for the previous week and today only.
   state.items = [];
-  await requestDayWindow(state.day, false);
+  // Hydrate only the visible day before the first paint. The previous
+  // seven days are read from IndexedDB in the background immediately after.
+  await requestDayWindow(state.day, false, { preloadBack: 0 });
   state.sources.sort((a, b) => (a.addedAt || '').localeCompare(b.addedAt || ''));
   persistSourceSnapshot();
 
@@ -3058,25 +3193,13 @@ async function init() {
   initPullToRefresh();
   initAutoRefresh();
 
-  // Always begin a fresh network pass on app load. It starts while the boot
-  // screen is still present, but cached local content is rendered immediately
-  // so a slow or unavailable network never becomes a blank-screen blocker.
-  const initialRefresh = refreshAll(true, { notify: false })
-    .catch(() => ({
-      succeeded: 0,
-      failed: state.sources.length,
-    }))
-    .finally(() => {
-      state.startupRefreshActive = false;
-    });
+  // Paint the local archive first. Network refresh and enrichment are
+  // scheduled after that frame, so opening Dispatch never waits for feeds.
   renderAll();
   dismissBootScreen();
-  void Promise.all([
-    initialRefresh,
-    upgradeYouTubeSourceIcons(),
-    upgradeMissingArticleImages(),
-    upgradeYouTubeSources(),
-  ]).catch(() => {});
+  scheduleDayPreload();
+  scheduleBackgroundRefresh(BACKGROUND_REFRESH_DELAY_MS, true, true);
+  scheduleBackgroundEnrichment();
 
   // Keyboard: day navigation, modal focus management, and ESC to close overlays.
   document.addEventListener('keydown', (e) => {
