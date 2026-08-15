@@ -297,6 +297,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   overflow: hidden;
   min-height: 0;
   touch-action: pan-y;
+  contain: layout style;
 }
 
 #dayview {
@@ -333,6 +334,9 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   padding: 0.82rem;                     /* 14pt */
   transition: transform 0.5s var(--spring), opacity 0.3s var(--ease-fast);
   animation: none;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
+  contain: layout style;
 }
 
 /* Only cards arriving after the initial cached render animate. */
@@ -780,6 +784,8 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   min-height: 62px;
   touch-action: pan-y;
   transition: transform 0.44s var(--ease);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 62px;
 }
 .source-row + .source-row { border-top: 0.5px solid var(--separator); }
 .source-row .source-icon {
