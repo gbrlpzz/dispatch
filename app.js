@@ -20,10 +20,41 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+const ENTITY_MAP = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&nbsp;': ' ',
+};
+const ENTITY_REGEX = /&(?:amp|lt|gt|quot|#39|apos|nbsp|#\d+|#x[0-9a-fA-F]+);/g;
+
+function decodeHtmlEntities(str) {
+  if (!str || !str.includes('&')) return str;
+  return str.replace(ENTITY_REGEX, (m) => {
+    if (ENTITY_MAP[m]) return ENTITY_MAP[m];
+    if (m.charCodeAt(1) === 35) {
+      if (m.charCodeAt(2) === 120 || m.charCodeAt(2) === 88) {
+        const code = parseInt(m.slice(3, -1), 16);
+        return isNaN(code) ? m : String.fromCharCode(code);
+      }
+      const code = parseInt(m.slice(2, -1), 10);
+      return isNaN(code) ? m : String.fromCharCode(code);
+    }
+    return m;
+  });
+}
+
 function stripHtml(html) {
-  const t = document.createElement('div');
-  t.innerHTML = html || '';
-  return (t.textContent || '').replace(/\s+/g, ' ').trim();
+  if (!html) return '';
+  const text = html
+    .replace(/<(?:script|style)[^>]*>[\s\S]*?<\/(?:script|style)>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/(?:p|div|li|h[1-6]|tr|blockquote|article|section)>/gi, ' ')
+    .replace(/<[^>]+>/g, '');
+  return decodeHtmlEntities(text).replace(/\s+/g, ' ').trim();
 }
 
 function truncate(s, n) {
@@ -71,12 +102,19 @@ function hasYouTubeShortMarker(value) {
 
 const DAY_MS = 86400000;
 
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
 function todayMidnight() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function dayKey(d) {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
 }
-function fromDayKey(k) { const [y, m, dd] = k.split('-').map(Number); return new Date(y, m - 1, dd); }
+function fromDayKey(k) {
+  const y = +k.slice(0, 4);
+  const m = +k.slice(5, 7) - 1;
+  const d = +k.slice(8, 10);
+  return new Date(y, m, d);
+}
 
 function navTitle(d) {
   // The bubbles already carry the precise DD/MM date; keep the native
@@ -100,8 +138,8 @@ function fmtDuration(sec) {
   if (!sec && sec !== 0) return '';
   sec = Math.round(sec);
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
-  if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-  return m + ':' + String(s).padStart(2, '0');
+  if (h > 0) return h + ':' + pad2(m) + ':' + pad2(s);
+  return m + ':' + pad2(s);
 }
 
 /* ---------------- SVG glyphs (monochrome SF-style) ---------------- */
@@ -266,7 +304,7 @@ async function storeBulkPut(store, values) {
   if (!values.length) return;
   const tx = state.db.transaction(store, 'readwrite');
   const os = tx.objectStore(store);
-  for (const v of values) os.put(v);
+  for (let i = 0; i < values.length; i++) os.put(values[i]);
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
 }
 
@@ -300,8 +338,8 @@ async function restoreSourcesFromSnapshot() {
   const saved = readSourceSnapshot();
   if (!saved.length) return [];
   const restored = [];
-  for (const savedSource of saved) {
-    const source = Object.assign({}, savedSource, { lastFetchedAt: null, lastError: null });
+  for (let i = 0; i < saved.length; i++) {
+    const source = Object.assign({}, saved[i], { lastFetchedAt: null, lastError: null });
     try {
       await storePut('sources', source);
       restored.push(source);
@@ -319,9 +357,10 @@ async function deleteSourceCascade(sourceId) {
   tx.objectStore('sources').delete(sourceId);
   const idx = tx.objectStore('items').index('sourceId');
   const req = idx.openKeyCursor(IDBKeyRange.only(sourceId));
+  const os = tx.objectStore('items');
   req.onsuccess = () => {
     const cur = req.result;
-    if (cur) { tx.objectStore('items').delete(cur.primaryKey); cur.continue(); }
+    if (cur) { os.delete(cur.primaryKey); cur.continue(); }
   };
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
 }
@@ -329,9 +368,10 @@ async function deleteItemsForSource(sourceId) {
   const tx = state.db.transaction('items', 'readwrite');
   const idx = tx.objectStore('items').index('sourceId');
   const req = idx.openKeyCursor(IDBKeyRange.only(sourceId));
+  const os = tx.objectStore('items');
   req.onsuccess = () => {
     const cur = req.result;
-    if (cur) { tx.objectStore('items').delete(cur.primaryKey); cur.continue(); }
+    if (cur) { os.delete(cur.primaryKey); cur.continue(); }
   };
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
 }
@@ -340,7 +380,7 @@ async function deleteItemsByIds(ids) {
   if (!ids.length) return;
   const tx = state.db.transaction('items', 'readwrite');
   const os = tx.objectStore('items');
-  for (const id of ids) os.delete(id);
+  for (let i = 0; i < ids.length; i++) os.delete(ids[i]);
   await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
 }
 
@@ -348,52 +388,84 @@ async function deleteItemsByIds(ids) {
 
 function dayKeysBetween(start, end) {
   const keys = [];
-  for (let d = addDays(start, 0); d <= end; d = addDays(d, 1)) keys.push(dayKey(d));
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endTime = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  while (cur.getTime() <= endTime) {
+    keys.push(dayKey(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
   return keys;
 }
 
 function flattenDayCache() {
-  state.items = [];
-  for (const items of state.dayCache.values()) state.items.push(...items);
+  const items = [];
+  for (const dayItems of state.dayCache.values()) {
+    for (let i = 0; i < dayItems.length; i++) items.push(dayItems[i]);
+  }
+  state.items = items;
 }
 
 function itemIdentity(item) {
   if (!item) return '';
-  return String(item.sourceId == null ? '' : item.sourceId) + '\u0000' +
-    String(item.guid || item.link || item.id || '');
+  return (item.sourceId == null ? '' : item.sourceId) + '\0' +
+    (item.guid || item.link || item.id || '');
 }
 
-function itemDataSignature(item) {
-  return JSON.stringify([
-    itemIdentity(item),
-    item.day || '',
-    item.publishedAt || '',
-    item.title || '',
-    item.author || '',
-    item.summary || '',
-    item.link || '',
-    item.audioUrl || '',
-    item.imageUrl || '',
-    item.duration || '',
-    item.kind || '',
-    !!item.youtubeShort,
-  ]);
+function itemsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.guid === b.guid &&
+    a.sourceId === b.sourceId &&
+    a.day === b.day &&
+    a.publishedAt === b.publishedAt &&
+    a.title === b.title &&
+    a.author === b.author &&
+    a.summary === b.summary &&
+    a.link === b.link &&
+    a.audioUrl === b.audioUrl &&
+    a.imageUrl === b.imageUrl &&
+    a.duration === b.duration &&
+    a.kind === b.kind &&
+    !a.youtubeShort === !b.youtubeShort;
 }
 
 function dayItemsEqual(left, right) {
   if (left === right) return true;
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-  const previous = new Map(left.map((item) => [itemIdentity(item), itemDataSignature(item)]));
-  return right.every((item) => previous.get(itemIdentity(item)) === itemDataSignature(item));
+  const len = left.length;
+  let sameOrder = true;
+  for (let i = 0; i < len; i++) {
+    if (!itemsEqual(left[i], right[i])) {
+      sameOrder = false;
+      break;
+    }
+  }
+  if (sameOrder) return true;
+
+  const map = new Map();
+  for (let i = 0; i < len; i++) {
+    map.set(itemIdentity(left[i]), left[i]);
+  }
+  for (let i = 0; i < len; i++) {
+    const prev = map.get(itemIdentity(right[i]));
+    if (!itemsEqual(prev, right[i])) return false;
+  }
+  return true;
 }
 
 function mergeDayItems(previous, next) {
+  if (!previous.length) return next.slice();
+  if (!next.length) return previous.slice();
   const merged = previous.slice();
-  const indexes = new Map(merged.map((item, index) => [itemIdentity(item), index]));
-  for (const item of next) {
+  const indexes = new Map();
+  for (let i = 0; i < merged.length; i++) {
+    indexes.set(itemIdentity(merged[i]), i);
+  }
+  for (let i = 0; i < next.length; i++) {
+    const item = next[i];
     const identity = itemIdentity(item);
     const index = indexes.get(identity);
-    if (index == null) {
+    if (index === undefined) {
       indexes.set(identity, merged.length);
       merged.push(item);
     } else {
@@ -437,13 +509,17 @@ function syncLoadedDayCache(removeMissing = false) {
       }
 
       const grouped = new Map();
-      for (const row of rows) {
-        if (!grouped.has(row.day)) grouped.set(row.day, []);
-        grouped.get(row.day).push(row);
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const existing = grouped.get(row.day);
+        if (existing) existing.push(row);
+        else grouped.set(row.day, [row]);
       }
 
       let changed = false;
-      for (const key of dayKeysBetween(fromDayKey(range.start), fromDayKey(range.end))) {
+      const rangeKeys = dayKeysBetween(fromDayKey(range.start), fromDayKey(range.end));
+      for (let i = 0; i < rangeKeys.length; i++) {
+        const key = rangeKeys[i];
         const previous = state.dayCache.get(key);
         if (previous === undefined) continue;
         const next = grouped.get(key) || [];
@@ -500,11 +576,16 @@ async function loadDayWindow(center, token, options = {}) {
     if (token !== state.dayLoadToken) return;
 
     const grouped = new Map();
-    for (const row of rows) {
-      if (!grouped.has(row.day)) grouped.set(row.day, []);
-      grouped.get(row.day).push(row);
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const existing = grouped.get(row.day);
+      if (existing) existing.push(row);
+      else grouped.set(row.day, [row]);
     }
-    for (const key of missing) state.dayCache.set(key, grouped.get(key) || []);
+    for (let i = 0; i < missing.length; i++) {
+      const key = missing[i];
+      state.dayCache.set(key, grouped.get(key) || []);
+    }
   }
 
   if (token !== state.dayLoadToken) return;
@@ -566,9 +647,11 @@ function mediaWarmDayKeys() {
 function mediaUrlsForWarmWindow() {
   const urls = [];
   const seen = new Set();
-  for (const key of mediaWarmDayKeys()) {
-    for (const item of state.dayCache.get(key) || []) {
-      const url = String(item.imageUrl || '').trim();
+  const keys = mediaWarmDayKeys();
+  for (let k = 0; k < keys.length; k++) {
+    const items = state.dayCache.get(keys[k]) || [];
+    for (let i = 0; i < items.length; i++) {
+      const url = String(items[i].imageUrl || '').trim();
       if (!url || seen.has(url)) continue;
       seen.add(url);
       urls.push(url);
@@ -601,7 +684,7 @@ function preloadMediaUrl(url) {
       if ('fetchPriority' in image) image.fetchPriority = 'low';
       image.onload = finish;
       image.onerror = finish;
-      timer = setTimeout(finish, 12000);
+      timer = setTimeout(finish, 8000);
       image.src = url;
     } catch (e) {
       finish();
@@ -635,6 +718,8 @@ const PROXIES = [
   (u) => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u),
 ];
 
+let preferredProxyIndex = 0;
+
 async function fetchWithTimeout(url, opts, ms) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms || 20000);
@@ -653,14 +738,20 @@ async function fetchText(url, options = {}) {
     'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.5',
   };
   try {
-    const r = await fetchWithTimeout(url, { headers, redirect: 'follow' }, 8000);
+    const r = await fetchWithTimeout(url, { headers, redirect: 'follow' }, 6000);
     if (r.ok) {
       const text = await r.text();
       if (accepts(text)) return { text, via: 'direct' };
     }
   } catch (e) { /* CORS or network — fall through to proxies */ }
 
+  const proxyOrder = [preferredProxyIndex];
   for (let i = 0; i < PROXIES.length; i++) {
+    if (i !== preferredProxyIndex) proxyOrder.push(i);
+  }
+
+  for (let p = 0; p < proxyOrder.length; p++) {
+    const i = proxyOrder[p];
     try {
       const r = await fetchWithTimeout(PROXIES[i](url), { headers }, 10000);
       if (!r.ok) continue;
@@ -671,19 +762,26 @@ async function fetchText(url, options = {}) {
           const envelope = JSON.parse(text);
           if (envelope && envelope.status >= 200 && envelope.status < 300 &&
               typeof envelope.body === 'string' && accepts(envelope.body)) {
+            preferredProxyIndex = i;
             return { text: envelope.body, via: 'proxy' };
           }
         } catch (e) { /* not the cors.io envelope */ }
         continue;
       }
-      if (i === PROXIES.length - 1) {
+      if (i === 4) {
         try {
           const j = JSON.parse(text);
-          if (j && typeof j.contents === 'string' && accepts(j.contents)) return { text: j.contents, via: 'proxy' };
+          if (j && typeof j.contents === 'string' && accepts(j.contents)) {
+            preferredProxyIndex = i;
+            return { text: j.contents, via: 'proxy' };
+          }
         } catch (e) { /* not JSON */ }
         continue;
       }
-      if (!/^\s*[{[]/.test(text) && accepts(text)) return { text, via: 'proxy' };
+      if (!/^\s*[{[]/.test(text) && accepts(text)) {
+        preferredProxyIndex = i;
+        return { text, via: 'proxy' };
+      }
     } catch (e) { /* try next proxy */ }
   }
   throw new Error('Could not fetch this URL from the browser (blocked by CORS).');
@@ -715,24 +813,42 @@ async function fetchFeed(url) {
 
 /* ---------------- Feed parsing (RSS 2.0 + Atom + YouTube) ---------------- */
 
-function localChildren(node, local) {
-  const out = [];
-  for (const c of node.children || []) {
-    const ln = String(c.localName || c.tagName || '').toLowerCase().split(':').pop();
-    if (ln === local.toLowerCase()) out.push(c);
+function getNodeChildrenIndex(node) {
+  if (node._childrenIndex) return node._childrenIndex;
+  const index = Object.create(null);
+  const children = node.children || [];
+  for (let i = 0; i < children.length; i++) {
+    const c = children[i];
+    let tag = c.localName || c.tagName || '';
+    const colon = tag.indexOf(':');
+    if (colon !== -1) tag = tag.slice(colon + 1);
+    tag = tag.toLowerCase();
+    if (index[tag]) index[tag].push(c);
+    else index[tag] = [c];
   }
-  return out;
+  node._childrenIndex = index;
+  return index;
 }
+
+function localChildren(node, local) {
+  if (!node) return [];
+  const index = getNodeChildrenIndex(node);
+  return index[local.toLowerCase()] || [];
+}
+
 function childText(node, locals) {
-  for (const l of locals) {
-    const c = localChildren(node, l)[0];
+  for (let i = 0; i < locals.length; i++) {
+    const list = localChildren(node, locals[i]);
+    const c = list[0];
     if (c && c.textContent && c.textContent.trim()) return c.textContent.trim();
   }
   return '';
 }
+
 function childAttr(node, locals, attr) {
-  for (const l of locals) {
-    const c = localChildren(node, l)[0];
+  for (let i = 0; i < locals.length; i++) {
+    const list = localChildren(node, locals[i]);
+    const c = list[0];
     if (c) {
       const v = c.getAttribute(attr);
       if (v && v.trim()) return v.trim();
@@ -742,8 +858,9 @@ function childAttr(node, locals, attr) {
 }
 
 function childUrl(node, locals) {
-  for (const l of locals) {
-    const c = localChildren(node, l)[0];
+  for (let i = 0; i < locals.length; i++) {
+    const list = localChildren(node, locals[i]);
+    const c = list[0];
     if (!c) continue;
     for (const attr of ['href', 'url', 'src']) {
       const v = c.getAttribute(attr);
@@ -754,9 +871,10 @@ function childUrl(node, locals) {
   }
   return '';
 }
+
 function attrOf(node, names) {
-  for (const n of names) {
-    const v = node.getAttribute(n);
+  for (let i = 0; i < names.length; i++) {
+    const v = node.getAttribute(names[i]);
     if (v && v.trim()) return v.trim();
   }
   return '';
@@ -768,20 +886,26 @@ function firstImage(html) {
   if (metaImage) return metaImage;
 
   // Prefer a real editorial image over a tracking pixel, avatar, or logo.
-  const tags = html.match(/<img\b[^>]*>/gi) || [];
-  for (const tag of tags) {
+  const imgTagRegex = /<img\b[^>]*>/gi;
+  let tagMatch;
+  while ((tagMatch = imgTagRegex.exec(html)) !== null) {
+    const tag = tagMatch[0];
     let src = (tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
     if (!src) src = (tag.match(/\bdata-src\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
     if (!src) src = (tag.match(/\bdata-lazy-src\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
     if (!src) src = (tag.match(/\bdata-original\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
     if (!src) {
       const srcset = (tag.match(/\b(?:srcset|data-srcset)\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
-      const candidates = srcset.split(',').map((candidate) => candidate.trim().split(/\s+/)[0]).filter(Boolean);
-      src = candidates[candidates.length - 1] || '';
+      if (srcset) {
+        const candidates = srcset.split(',').map((candidate) => candidate.trim().split(/\s+/)[0]).filter(Boolean);
+        src = candidates[candidates.length - 1] || '';
+      }
     }
     if (!src) {
       const attrs = (tag.match(/\bdata-attrs\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
-      try { src = JSON.parse(attrs.replace(/&quot;/g, '"')).src || ''; } catch (e) { /* ignore malformed metadata */ }
+      if (attrs) {
+        try { src = JSON.parse(attrs.replace(/&quot;/g, '"')).src || ''; } catch (e) { /* ignore */ }
+      }
     }
     if (!src || /^data:/i.test(src) || /\.svg(?:[?#]|$)/i.test(src)) continue;
     const width = Number((tag.match(/\bwidth=["']?(\d+)/i) || [])[1] || 0);
@@ -835,7 +959,7 @@ function parseFeed(text, feedUrl, options = {}) {
     if (img) feedIcon = childUrl(img, ['url']);
     feedIcon = feedIcon || childUrl(channel, ['image', 'icon', 'logo', 'thumbnail']);
     const entries = localChildren(channel, 'item');
-    for (const it of entries) pushItem(parseRssItem(it));
+    for (let i = 0; i < entries.length; i++) pushItem(parseRssItem(entries[i]));
   } else if (rootName === 'feed') {
     feedTitle = childText(root, ['title']) || hostOf(feedUrl);
     feedLink = childAttr(root, ['link'], 'href') || feedUrl;
@@ -846,7 +970,7 @@ function parseFeed(text, feedUrl, options = {}) {
     feedAuthorUrl = childUrl(author, ['uri', 'link']);
     feedChannelId = childText(root, ['channelId']);
     const entries = localChildren(root, 'entry');
-    for (const it of entries) pushItem(parseAtomItem(it));
+    for (let i = 0; i < entries.length; i++) pushItem(parseAtomItem(entries[i]));
   } else {
     throw new Error('Unrecognized feed format.');
   }
@@ -997,8 +1121,8 @@ function youtubeChannelIdFromHtml(html) {
     /(?:itemprop|name)\s*=\s*["']channelId["'][^>]+content\s*=\s*["'](UC[\w-]{22})/i,
     /content\s*=\s*["'](UC[\w-]{22})["'][^>]+(?:itemprop|name)\s*=\s*["']channelId["']/i,
   ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
+  for (let i = 0; i < patterns.length; i++) {
+    const match = text.match(patterns[i]);
     if (match) return match[1];
   }
 
@@ -1062,8 +1186,8 @@ function youtubeChannelIdFromSource(source, parsed) {
     source && fromUrl(source.channelUrl),
     source && fromUrl(source.url),
   ];
-  for (const candidate of candidates) {
-    const id = normalizeYouTubeChannelId(candidate);
+  for (let i = 0; i < candidates.length; i++) {
+    const id = normalizeYouTubeChannelId(candidates[i]);
     if (id) return id;
   }
   return null;
@@ -1091,7 +1215,8 @@ async function fetchFeedForSource(source) {
   let lastError = null;
   const tried = new Set();
   const tryCandidates = async (urls) => {
-    for (const feedUrl of urls) {
+    for (let i = 0; i < urls.length; i++) {
+      const feedUrl = urls[i];
       if (!feedUrl || tried.has(feedUrl)) continue;
       tried.add(feedUrl);
       try { return await fetchFeed(feedUrl); }
@@ -1136,7 +1261,8 @@ function canonicalizeYouTubeSource(source, parsed) {
 }
 
 function decodeRemoteUrl(value) {
-  return String(value || '')
+  if (!value) return '';
+  return String(value)
     .replace(/\\u0026/gi, '&')
     .replace(/\\u003d/gi, '=')
     .replace(/\\\//g, '/')
@@ -1146,14 +1272,15 @@ function decodeRemoteUrl(value) {
 }
 
 function metaContent(html, name) {
-  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
-  for (const tag of tags) {
-    const key = (tag.match(/\b(?:property|name)=['"]([^'"]+)['"]/i) || [])[1] || '';
-    if (key.toLowerCase() !== name.toLowerCase()) continue;
-    const content = (tag.match(/\bcontent=['"]([^'"]+)['"]/i) || [])[1] || '';
-    if (content) return decodeRemoteUrl(content);
+  if (!html) return '';
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('<meta\\b[^>]*(?:property|name)=[\'"]' + escaped + '[\'"][^>]*content=[\'"]([^\'"]+)[\'"]', 'i');
+  let m = html.match(re);
+  if (!m) {
+    const altRe = new RegExp('<meta\\b[^>]*content=[\'"]([^\'"]+)[\'"][^>]*(?:property|name)=[\'"]' + escaped + '[\'"]', 'i');
+    m = html.match(altRe);
   }
-  return '';
+  return m && m[1] ? decodeRemoteUrl(m[1]) : '';
 }
 
 function absoluteUrl(value, base) {
@@ -1175,7 +1302,7 @@ async function articleImageFromPage(url) {
 async function enrichMissingArticleImages(sourceId, parsedItems) {
   const candidates = parsedItems
     .filter((item) => !item.imageUrl && item.link)
-    .slice(0, 40);
+    .slice(0, 30);
   if (!candidates.length) return;
 
   let cursor = 0;
@@ -1190,6 +1317,7 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
   const source = state.sources.find((candidate) => candidate.id === sourceId);
   if (!source || source.type !== 'article') return;
   const byGuid = new Map(candidates.filter((item) => item.imageUrl).map((item) => [item.guid, item.imageUrl]));
+  if (!byGuid.size) return;
   const existing = await storeGetBySourceId(sourceId);
   const updates = existing
     .filter((item) => byGuid.has(item.guid) && item.imageUrl !== byGuid.get(item.guid))
@@ -1198,8 +1326,11 @@ async function enrichMissingArticleImages(sourceId, parsedItems) {
 
   try {
     await storeBulkPut('items', updates);
-    await syncLoadedDayCache();
-    renderDayIncremental();
+    const touchesRange = state.dayRange && updates.some(it => it.day >= state.dayRange.start && it.day <= state.dayRange.end);
+    if (touchesRange) {
+      await syncLoadedDayCache();
+      renderDayIncremental();
+    }
   } catch (e) { /* keep the feed usable even if image enrichment cannot persist */ }
 }
 
@@ -1229,8 +1360,8 @@ function youtubeChannelAvatarFromHtml(html) {
     /"channelMetadataRenderer"[\s\S]{0,12000}?"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[([\s\S]*?)\]/i,
     /"avatar"\s*:\s*\{\s*"thumbnails"\s*:\s*\[([\s\S]*?)\]/i,
   ];
-  for (const pattern of patterns) {
-    const match = String(html || '').match(pattern);
+  for (let i = 0; i < patterns.length; i++) {
+    const match = String(html || '').match(patterns[i]);
     if (!match) continue;
     const urls = [...match[1].matchAll(/"url"\s*:\s*"([^"]+)"/gi)].map((m) => decodeRemoteUrl(m[1]));
     if (urls.length) return urls[urls.length - 1];
@@ -1275,7 +1406,8 @@ async function youtubeChannelImageFromSource(source) {
   if (fallbackId) candidates.push('https://www.youtube.com/channel/' + fallbackId);
 
   const seen = new Set();
-  for (const candidate of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
     if (!candidate || seen.has(candidate)) continue;
     seen.add(candidate);
     try {
@@ -1292,7 +1424,8 @@ async function oembed(url) {
     'https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent(url),
     'https://noembed.com/embed?url=' + encodeURIComponent(url),
   ];
-  for (const ep of endpoints) {
+  for (let i = 0; i < endpoints.length; i++) {
+    const ep = endpoints[i];
     try {
       const r = await fetchWithTimeout(ep, {}, 10000);
       if (r.ok) {
@@ -1689,92 +1822,109 @@ async function fetchSourceOnce(sourceId, preParsed, preText) {
   const source = state.sources.find((s) => s.id === sourceId);
   if (!source) return;
   let parsed = preParsed;
-    let feedText = preText || '';
-    if (!parsed) {
-      if (canonicalizeYouTubeSource(source)) {
-        await storePut('sources', source);
-        persistSourceSnapshot();
-      }
-      feedText = await fetchFeedForSource(source);
-      parsed = parseFeed(feedText, source.feedUrl);
-    }
-    if (canonicalizeYouTubeSource(source, parsed)) {
+  let feedText = preText || '';
+  if (!parsed) {
+    if (canonicalizeYouTubeSource(source)) {
       await storePut('sources', source);
       persistSourceSnapshot();
-      feedText = await fetchFeedForSource(source);
-      parsed = parseFeed(feedText, source.feedUrl);
     }
-    updateSourceMetadata(source, parsed, feedText);
-    const channelIconPromise = needsYouTubeChannelIcon(source)
-      ? youtubeChannelImageFromSource(source).catch(() => '')
-      : null;
+    feedText = await fetchFeedForSource(source);
+    parsed = parseFeed(feedText, source.feedUrl);
+  }
+  if (canonicalizeYouTubeSource(source, parsed)) {
+    await storePut('sources', source);
+    persistSourceSnapshot();
+    feedText = await fetchFeedForSource(source);
+    parsed = parseFeed(feedText, source.feedUrl);
+  }
+  updateSourceMetadata(source, parsed, feedText);
+  const channelIconPromise = needsYouTubeChannelIcon(source)
+    ? youtubeChannelImageFromSource(source).catch(() => '')
+    : null;
 
-    const now = new Date().toISOString();
-    const normalized = [];
-    for (const it of parsed.items) {
-      normalized.push({
-        sourceId,
-        guid: it.guid,
-        day: dayKey(it.publishedAt ? new Date(it.publishedAt) : todayMidnight()),
-        title: it.title,
-        author: it.author,
-        summary: it.summary,
-        link: it.link,
-        audioUrl: it.audioUrl,
-        imageUrl: it.imageUrl,
-        duration: it.duration,
-        publishedAt: it.publishedAt || now,
-        kind: it.kind === 'article' && source.type === 'youtube' ? 'youtube' : it.kind,
-        youtubeShort: !!it.youtubeShort,
-        fetchedAt: now,
-      });
-    }
-    // Upsert: keep existing ids for same (sourceId, guid)
-    const existing = await storeGetBySourceId(sourceId);
-    const byGuid = new Map(existing.map((i) => [i.guid, i]));
-    const seen = new Set();
-    const uniq = normalized.filter((n) => (seen.has(n.guid) ? false : (seen.add(n.guid), true)));
-    const toPut = [];
-    for (const n of uniq) {
-      const old = byGuid.get(n.guid);
-      if (old) {
-        if (old.publishedAt === n.publishedAt && old.title === n.title && old.summary === n.summary &&
-            old.author === n.author && old.link === n.link && old.imageUrl === n.imageUrl &&
-            old.duration === n.duration && old.kind === n.kind && old.youtubeShort === n.youtubeShort) continue;
-        toPut.push(Object.assign({}, old, n, { id: old.id }));
-      } else {
-        toPut.push(n);
-      }
-    }
-    await storeBulkPut('items', toPut);
+  const now = new Date().toISOString();
+  const normalized = [];
+  for (let i = 0; i < parsed.items.length; i++) {
+    const it = parsed.items[i];
+    normalized.push({
+      sourceId,
+      guid: it.guid,
+      day: dayKey(it.publishedAt ? new Date(it.publishedAt) : todayMidnight()),
+      title: it.title,
+      author: it.author,
+      summary: it.summary,
+      link: it.link,
+      audioUrl: it.audioUrl,
+      imageUrl: it.imageUrl,
+      duration: it.duration,
+      publishedAt: it.publishedAt || now,
+      kind: it.kind === 'article' && source.type === 'youtube' ? 'youtube' : it.kind,
+      youtubeShort: !!it.youtubeShort,
+      fetchedAt: now,
+    });
+  }
 
-    // Bounded history: keep the newest MAX_ITEMS_PER_SOURCE items per source,
-    // prune the rest so local storage stays minimal but the archive persists.
-    const MAX_ITEMS_PER_SOURCE = 4000;
+  // Upsert: keep existing ids for same (sourceId, guid)
+  const existing = await storeGetBySourceId(sourceId);
+  const byGuid = new Map();
+  for (let i = 0; i < existing.length; i++) {
+    byGuid.set(existing[i].guid, existing[i]);
+  }
+  const seen = new Set();
+  const uniq = [];
+  for (let i = 0; i < normalized.length; i++) {
+    const n = normalized[i];
+    if (!seen.has(n.guid)) {
+      seen.add(n.guid);
+      uniq.push(n);
+    }
+  }
+
+  const toPut = [];
+  for (let i = 0; i < uniq.length; i++) {
+    const n = uniq[i];
+    const old = byGuid.get(n.guid);
+    if (old) {
+      if (old.publishedAt === n.publishedAt && old.title === n.title && old.summary === n.summary &&
+          old.author === n.author && old.link === n.link && old.imageUrl === n.imageUrl &&
+          old.duration === n.duration && old.kind === n.kind && old.youtubeShort === n.youtubeShort) continue;
+      toPut.push(Object.assign({}, old, n, { id: old.id }));
+    } else {
+      toPut.push(n);
+    }
+  }
+  await storeBulkPut('items', toPut);
+
+  // Bounded history: keep the newest MAX_ITEMS_PER_SOURCE items per source,
+  // prune the rest so local storage stays minimal but the archive persists.
+  const MAX_ITEMS_PER_SOURCE = 4000;
+  if (existing.length + toPut.length > MAX_ITEMS_PER_SOURCE) {
     const mine = await storeGetBySourceId(sourceId);
     if (mine.length > MAX_ITEMS_PER_SOURCE) {
       mine.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
       const keep = new Set(mine.slice(0, MAX_ITEMS_PER_SOURCE).map((i) => i.id));
       const drop = mine.filter((i) => !keep.has(i.id)).map((i) => i.id);
       const tx = state.db.transaction('items', 'readwrite');
-      for (const id of drop) tx.objectStore('items').delete(id);
+      for (let i = 0; i < drop.length; i++) tx.objectStore('items').delete(drop[i]);
       await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
     }
+  }
 
-    // Keep the archive in IndexedDB and reconcile the already-loaded window in
-    // the background. The visible day cache is never cleared during refresh.
+  // Keep the archive in IndexedDB and reconcile the already-loaded window in
+  // the background. The visible day cache is never cleared during refresh.
+  if (toPut.length && state.dayRange) {
+    const touchesRange = toPut.some(it => it.day >= state.dayRange.start && it.day <= state.dayRange.end);
+    if (touchesRange) await syncLoadedDayCache();
+  }
 
-
-    if (toPut.length) await syncLoadedDayCache();
-
-    source.lastFetchedAt = now;
-    source.lastError = null;
-    await storePut('sources', source);
-    persistSourceSnapshot();
-    if (source.type === 'article') void enrichMissingArticleImages(source.id, parsed.items);
-    if (channelIconPromise) {
-      void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
-    }
+  source.lastFetchedAt = now;
+  source.lastError = null;
+  await storePut('sources', source);
+  persistSourceSnapshot();
+  if (source.type === 'article') void enrichMissingArticleImages(source.id, parsed.items);
+  if (channelIconPromise) {
+    void channelIconPromise.then((image) => saveYouTubeChannelIcon(source, image)).catch(() => {});
+  }
 }
 
 function sourceErrorMessage(error) {
@@ -1897,9 +2047,9 @@ function refreshAll(force, options = {}) {
           REFRESH_CONCURRENCY,
           (sourceId) => refreshSource(sourceId, { maxAttempts: 1 })
         );
-        passResults.forEach((result, index) => {
-          resultsById.set(pendingIds[index], result);
-        });
+        for (let i = 0; i < passResults.length; i++) {
+          resultsById.set(pendingIds[i], passResults[i]);
+        }
         pendingIds = pendingIds.filter((sourceId) => {
           const result = resultsById.get(sourceId);
           return !(result && (result.ok || result.missing));
@@ -2064,6 +2214,7 @@ function ensureStripRange() {
 function renderStrip({ center = false, smooth = false, preserveAnchorKey = null, preserveAnchorOffset = 0 } = {}) {
   ensureStripRange();
   const strip = $('#strip');
+  if (!strip) return;
   const today = todayMidnight();
   const selKey = dayKey(state.day);
   const prevScrollLeft = strip.scrollLeft;
@@ -2071,22 +2222,56 @@ function renderStrip({ center = false, smooth = false, preserveAnchorKey = null,
   const selWasVisible = prevSel
     ? (prevSel.offsetLeft >= prevScrollLeft - 8 && prevSel.offsetLeft + prevSel.clientWidth <= prevScrollLeft + strip.clientWidth + 8)
     : false;
+
+  const existingBubbles = strip.querySelectorAll('.bubble');
+  const startKey = dayKey(state.stripRange.start);
+  const endKey = dayKey(state.stripRange.end);
+  const firstKey = existingBubbles[0] ? existingBubbles[0].dataset.day : null;
+  const lastKey = existingBubbles[existingBubbles.length - 1] ? existingBubbles[existingBubbles.length - 1].dataset.day : null;
+
+  if (firstKey === startKey && lastKey === endKey) {
+    const todayKeyVal = dayKey(today);
+    for (let i = 0; i < existingBubbles.length; i++) {
+      const b = existingBubbles[i];
+      const k = b.dataset.day;
+      let cls = 'bubble';
+      if (k === selKey) cls += ' bubble--selected';
+      else if (k === todayKeyVal) cls += ' bubble--today';
+      else if (k < todayKeyVal) cls += ' bubble--past';
+      if (b.className !== cls) b.className = cls;
+    }
+    if (center) {
+      scrollStripTo(selKey, smooth);
+    } else if (!selWasVisible && center) {
+      scrollStripTo(selKey, false);
+    }
+    return;
+  }
+
   const frag = document.createDocumentFragment();
-  for (let d = state.stripRange.start; d <= state.stripRange.end; d = addDays(d, 1)) {
-    const key = dayKey(d);
+  const cur = new Date(state.stripRange.start.getFullYear(), state.stripRange.start.getMonth(), state.stripRange.start.getDate());
+  const endTime = new Date(state.stripRange.end.getFullYear(), state.stripRange.end.getMonth(), state.stripRange.end.getDate()).getTime();
+  const todayKeyVal = dayKey(today);
+
+  while (cur.getTime() <= endTime) {
+    const key = dayKey(cur);
     let cls = 'bubble';
     if (key === selKey) cls += ' bubble--selected';
-    else if (key === dayKey(today)) cls += ' bubble--today';
-    else if (d < today) cls += ' bubble--past';
-    else continue;
+    else if (key === todayKeyVal) cls += ' bubble--today';
+    else if (cur < today) cls += ' bubble--past';
+    else {
+      cur.setDate(cur.getDate() + 1);
+      continue;
+    }
     const b = el('button', cls);
-    b.setAttribute('aria-label', d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+    b.setAttribute('aria-label', cur.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
     b.dataset.day = key;
     // Live date, day/month, no weekday — “09/08” for 9 August.
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = pad2(cur.getDate());
+    const mm = pad2(cur.getMonth() + 1);
     b.innerHTML = '<span class="dn">' + dd + '/' + mm + '</span>';
     frag.appendChild(b);
+    cur.setDate(cur.getDate() + 1);
   }
   strip.innerHTML = '';
   strip.appendChild(frag);
@@ -2111,6 +2296,7 @@ function extendStripRange(direction) {
   const today = todayMidnight();
   if (direction > 0 && state.stripRange.end >= today) return;
   const strip = $('#strip');
+  if (!strip) return;
   const anchorKey = direction < 0
     ? dayKey(state.stripRange.start)
     : dayKey(state.stripRange.end);
@@ -2128,7 +2314,7 @@ function extendStripRange(direction) {
 
 function maybeExtendStripRange() {
   const strip = $('#strip');
-  if (!state.stripRange || strip.scrollWidth <= strip.clientWidth) return;
+  if (!strip || !state.stripRange || strip.scrollWidth <= strip.clientWidth) return;
   const threshold = Math.max(72, strip.clientWidth * 0.18);
   if (strip.scrollLeft < threshold) extendStripRange(-1);
   else if (strip.scrollLeft + strip.clientWidth > strip.scrollWidth - threshold) extendStripRange(1);
@@ -2136,6 +2322,7 @@ function maybeExtendStripRange() {
 
 function scrollStripTo(dayKeyVal, smooth) {
   const strip = $('#strip');
+  if (!strip) return;
   const b = strip.querySelector('.bubble[data-day="' + dayKeyVal + '"]');
   if (!b) return;
   const target = b.offsetLeft - strip.clientWidth / 2 + b.clientWidth / 2;
@@ -2145,7 +2332,8 @@ function scrollStripTo(dayKeyVal, smooth) {
 /* ---------------- Rendering: day content ---------------- */
 
 function sourceBadge(source) {
-  const letter = source && source.title ? esc(source.title.trim()[0].toUpperCase()) : '?';
+  const title = source && source.title ? source.title.trim() : '';
+  const letter = title ? esc(title[0].toUpperCase()) : '?';
   if (source && source.iconUrl) {
     return '<span class="source-badge"><span class="badge-letter" aria-hidden="true">' + letter + '</span><img class="media-reveal" decoding="async" draggable="false" src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onload="this.classList.add(\'media-reveal--loaded\')" onerror="this.remove()"></span>';
   }
@@ -2191,13 +2379,20 @@ function pillLabel(item, source) {
 }
 
 function itemRenderKey(item, source) {
-  return JSON.stringify([
-    itemDataSignature(item),
-    source ? source.title || '' : '',
-    source ? source.iconUrl || '' : '',
-    source ? source.itunesUrl || '' : '',
-    source ? source.siteUrl || '' : '',
-  ]);
+  return (item.guid || '') + '|' +
+    (item.title || '') + '|' +
+    (item.author || '') + '|' +
+    (item.summary || '') + '|' +
+    (item.link || '') + '|' +
+    (item.imageUrl || '') + '|' +
+    (item.duration || '') + '|' +
+    (item.publishedAt || '') + '|' +
+    (item.kind || '') + '|' +
+    (!item.youtubeShort ? '0' : '1') + '|' +
+    (source ? source.title || '' : '') + '|' +
+    (source ? source.iconUrl || '' : '') + '|' +
+    (source ? source.itunesUrl || '' : '') + '|' +
+    (source ? source.siteUrl || '' : '');
 }
 
 function buildItemCard(item, source) {
@@ -2296,40 +2491,65 @@ function buildAppCredit() {
 }
 
 function visibleDayItems(cached) {
-  if (!cached) return [];
+  if (!cached || !cached.length) return [];
   const seen = new Set();
-  return cached
-    .filter((item) => !isFilteredYouTubeItem(item))
-    .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''))
-    .filter((item) => {
-      const key = itemIdentity(item);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  const result = [];
+  for (let i = 0; i < cached.length; i++) {
+    const item = cached[i];
+    if (isFilteredYouTubeItem(item)) continue;
+    const key = itemIdentity(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  if (result.length > 1) {
+    result.sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+  }
+  return result;
 }
 
 function animateDayReflow(before) {
-  if (prefersReducedMotion()) return;
+  if (prefersReducedMotion() || !before || !before.size) return;
   const view = $('#dayview');
+  if (!view) return;
   const cards = view.querySelectorAll('.card[data-item-key]');
-  for (const card of cards) {
+  if (!cards.length) return;
+
+  // Batch READS first to prevent forced synchronous reflow (layout thrashing)
+  const anims = [];
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i];
     const previous = before.get(card.dataset.itemKey);
     if (!previous) continue;
     const current = card.getBoundingClientRect();
     const delta = previous.top - current.top;
-    if (Math.abs(delta) < 1) continue;
-    card.style.transition = 'none';
-    card.style.transform = 'translateY(' + delta + 'px)';
-    requestAnimationFrame(() => {
-      card.style.transition = 'transform 0.56s var(--spring)';
-      card.style.transform = 'translateY(0)';
-      setTimeout(() => {
-        card.style.transition = '';
-        card.style.transform = '';
-      }, motionDelay(620));
-    });
+    if (Math.abs(delta) >= 1) {
+      anims.push({ card, delta });
+    }
   }
+  if (!anims.length) return;
+
+  // Batch WRITES second
+  for (let i = 0; i < anims.length; i++) {
+    const a = anims[i];
+    a.card.style.transition = 'none';
+    a.card.style.transform = 'translateY(' + a.delta + 'px)';
+  }
+
+  requestAnimationFrame(() => {
+    for (let i = 0; i < anims.length; i++) {
+      const a = anims[i];
+      a.card.style.transition = 'transform 0.56s var(--spring)';
+      a.card.style.transform = 'translateY(0)';
+    }
+    setTimeout(() => {
+      for (let i = 0; i < anims.length; i++) {
+        const a = anims[i];
+        a.card.style.transition = '';
+        a.card.style.transform = '';
+      }
+    }, motionDelay(620));
+  });
 }
 
 function renderDayIncremental() {
@@ -2342,10 +2562,12 @@ function renderDayIncremental() {
   if (!view) return;
   const items = visibleDayItems(cached);
   const srcById = new Map(state.sources.map((s) => [s.id, s]));
-  const before = new Map(
-    [...view.querySelectorAll('.card[data-item-key]')]
-      .map((card) => [card.dataset.itemKey, card.getBoundingClientRect()])
-  );
+
+  const shouldAnimate = !state.startupRefreshActive && !prefersReducedMotion();
+  const before = shouldAnimate
+    ? new Map([...view.querySelectorAll('.card[data-item-key]')].map((card) => [card.dataset.itemKey, card.getBoundingClientRect()]))
+    : null;
+
   const existing = new Map(
     [...view.querySelectorAll('.card[data-item-key]')]
       .map((card) => [card.dataset.itemKey, card])
@@ -2362,7 +2584,8 @@ function renderDayIncremental() {
   if (!items.length) {
     view.insertBefore(buildEmpty(day), footer);
   } else {
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       const source = srcById.get(item.sourceId);
       let card = existing.get(itemIdentity(item));
       if (!card) {
@@ -2381,19 +2604,22 @@ function renderDayIncremental() {
   }
 
   view.appendChild(footer);
-  if (insertedCount && !state.startupRefreshActive) animateDayReflow(before);
+  if (insertedCount && before) animateDayReflow(before);
   state.renderedDayKey = key;
-  $('#nav-title').textContent = navTitle(day);
+  const titleEl = $('#nav-title');
+  if (titleEl) titleEl.textContent = navTitle(day);
 }
 
 function renderDay() {
   const day = state.day;
   const key = dayKey(day);
   const view = $('#dayview');
+  if (!view) return;
   const cached = state.dayCache.get(key);
   const hasMountedDay = state.renderedDayKey === key && view.querySelector('.card, .empty');
   if (hasMountedDay) {
-    $('#nav-title').textContent = navTitle(day);
+    const titleEl = $('#nav-title');
+    if (titleEl) titleEl.textContent = navTitle(day);
     if (cached === undefined) return;
     renderDayIncremental();
     return;
@@ -2405,7 +2631,8 @@ function renderDay() {
   if (cached === undefined) {
     frag.appendChild(buildDayLoading(day));
   } else {
-    for (const it of items) {
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
       const src = srcById.get(it.sourceId);
       frag.appendChild(buildItemCard(it, src));
     }
@@ -2416,7 +2643,8 @@ function renderDay() {
   view.innerHTML = '';
   view.appendChild(frag);
   state.renderedDayKey = key;
-  $('#nav-title').textContent = navTitle(day);
+  const titleEl = $('#nav-title');
+  if (titleEl) titleEl.textContent = navTitle(day);
 }
 
 function renderAll(options = {}) {
@@ -2453,7 +2681,8 @@ function sourceSub(source) {
 function buildSourceRow(source, onDelete) {
   const row = el('div', 'source-row');
   row.dataset.id = source.id;
-  const letter = esc(source.title.trim()[0].toUpperCase() || '?');
+  const title = source.title ? source.title.trim() : '';
+  const letter = esc(title[0] ? title[0].toUpperCase() : '?');
   const icon = source.iconUrl
     ? '<span class="source-letter" aria-hidden="true">' + letter + '</span><img src="' + esc(source.iconUrl) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">'
     : letter;
@@ -2585,13 +2814,30 @@ function buildSourceRow(source, onDelete) {
   });
   return row;
 }
+
+function updateSourceRowInPlace(row, source) {
+  const subEl = row.querySelector('.s-sub');
+  if (subEl) {
+    const subText = sourceSub(source);
+    if (subEl.textContent !== subText) subEl.textContent = subText;
+    subEl.classList.toggle('s-sub--error', !!source.lastError);
+  }
+  const titleEl = row.querySelector('.s-title');
+  if (titleEl && titleEl.textContent !== source.title) {
+    titleEl.textContent = source.title;
+  }
+  const delBtn = row.querySelector('.s-delete');
+  if (delBtn) delBtn.setAttribute('aria-label', 'Delete ' + source.title);
+  const refreshBtn = row.querySelector('.s-refresh');
+  if (refreshBtn) refreshBtn.setAttribute('aria-label', 'Refresh ' + source.title);
+}
+
 function renderSourcesList() {
   const list = $('#sources-list');
-  const groups = el('div', 'source-group');
-  for (const s of state.sources) groups.appendChild(buildSourceRow(s));
+  if (!list) return;
 
-  list.innerHTML = '';
   if (state.sources.length === 0) {
+    list.innerHTML = '';
     const empty = el('div', 'empty');
     empty.innerHTML =
       '<div class="empty-glyph" aria-hidden="true">' + ICONS.text + '</div>' +
@@ -2600,9 +2846,42 @@ function renderSourcesList() {
       '<button type="button" class="pill pill--primary" data-action="add-source">Add a source</button>';
     empty.querySelector('[data-action="add-source"]').addEventListener('click', () => openSheet('source'));
     list.appendChild(empty);
-  } else {
-    list.appendChild(groups);
+
+    const footer = el('p', 'sources-footer');
+    footer.id = 'sources-footer';
+    footer.innerHTML =
+      'Swipe left to refresh · swipe right to delete.<br>' +
+      'Deleting a source removes its items from every day.';
+    list.appendChild(footer);
+    return;
   }
+
+  const group = list.querySelector('.source-group');
+  const existingRows = group ? group.querySelectorAll('.source-row') : [];
+
+  let matches = existingRows.length === state.sources.length;
+  if (matches) {
+    for (let i = 0; i < state.sources.length; i++) {
+      if (Number(existingRows[i].dataset.id) !== state.sources[i].id) {
+        matches = false;
+        break;
+      }
+    }
+  }
+
+  if (matches) {
+    for (let i = 0; i < state.sources.length; i++) {
+      updateSourceRowInPlace(existingRows[i], state.sources[i]);
+    }
+    return;
+  }
+
+  list.innerHTML = '';
+  const newGroup = el('div', 'source-group');
+  for (let i = 0; i < state.sources.length; i++) {
+    newGroup.appendChild(buildSourceRow(state.sources[i]));
+  }
+  list.appendChild(newGroup);
 
   const footer = el('p', 'sources-footer');
   footer.id = 'sources-footer';
@@ -2611,6 +2890,7 @@ function renderSourcesList() {
     'Deleting a source removes its items from every day.';
   list.appendChild(footer);
 }
+
 /* ---------------- Sheets ---------------- */
 
 let sheetMode = null;
@@ -2814,6 +3094,7 @@ function endRefreshFeedback() {
 
 function toast(msg) {
   const t = $('#toast');
+  if (!t) return;
   t.textContent = msg;
   t.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
@@ -2847,9 +3128,9 @@ function setDay(d, options = {}) {
 function goToDay(offset) {
   const dir = offset > 0 ? 1 : -1;
   if (dir > 0 && state.day >= todayMidnight()) return;
-  const w = $('#pager').clientWidth || window.innerWidth;
+  const w = ($('#pager') && $('#pager').clientWidth) || window.innerWidth;
   const view = $('#dayview');
-  if (view.dataset.swiping === '1') return;
+  if (!view || view.dataset.swiping === '1') return;
   if (prefersReducedMotion()) {
     setDay(addDays(state.day, dir));
     return;
@@ -2866,6 +3147,7 @@ function goToDay(offset) {
 function initSwipe() {
   const pager = $('#pager');
   const view = $('#dayview');
+  if (!pager || !view) return;
   let startX = 0, startY = 0, axis = null, active = false, dx = 0;
 
   const onDown = (x, y) => {
@@ -2933,7 +3215,7 @@ function initSwipe() {
 
   // Pointer path — desktop mouse drag fallback (mouse events only)
   pager.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'touch') return; // handled by touch path
+    if (e.pointerType === 'touch') return;
     onDown(e.clientX, e.clientY);
   });
   pager.addEventListener('pointermove', (e) => {
@@ -2948,6 +3230,7 @@ function initSwipe() {
 
 function initPullToRefresh() {
   const view = $('#dayview');
+  if (!view) return;
   let startY = 0, pulling = false, dy = 0;
 
   const onDown = (y) => {
@@ -2999,6 +3282,7 @@ function initSheetDismiss() {
   // Native iOS sheet behaviour: drag down from the grabber (or from a
   // scrolled-to-top body) to dismiss; release past the threshold to close.
   const sheet = sheetEl();
+  if (!sheet) return;
   let startY = null, dy = 0, dragging = false;
 
   sheet.addEventListener('touchstart', (e) => {
@@ -3042,12 +3326,15 @@ function initStripSpotlight() {
   // Scrolling the strip moves the whole carousel through a fixed centre;
   // the date that lands in the centre becomes the selected day.
   const strip = $('#strip');
+  if (!strip) return;
   let timer = null;
   const settle = () => {
     const rect = strip.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     let best = null, bestD = Infinity;
-    for (const b of strip.querySelectorAll('.bubble')) {
+    const bubbles = strip.querySelectorAll('.bubble');
+    for (let i = 0; i < bubbles.length; i++) {
+      const b = bubbles[i];
       const r = b.getBoundingClientRect();
       const d = Math.abs((r.left + r.width / 2) - cx);
       if (d < bestD) { bestD = d; best = b; }
