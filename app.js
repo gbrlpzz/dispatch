@@ -2678,6 +2678,16 @@ function sourceSub(source) {
   return sourceTypeLabel(source) + ' · not fetched yet';
 }
 
+let activeOpenSourceReset = null;
+
+function closeActiveSourceRow() {
+  if (activeOpenSourceReset) {
+    const fn = activeOpenSourceReset;
+    activeOpenSourceReset = null;
+    fn();
+  }
+}
+
 function buildSourceRow(source, onDelete) {
   const row = el('div', 'source-row');
   row.dataset.id = source.id;
@@ -2701,18 +2711,26 @@ function buildSourceRow(source, onDelete) {
 
   // Swipe left for Refresh and right for Delete.
   const actionWidth = 92;
-  const revealThreshold = 46;
+  const revealThreshold = 44;
   let startX = null, startY = null, curDx = 0;
-  let openDirection = 0, dragging = false, axis = null, suppressClick = false;
+  let openDirection = 0, dragging = false, axis = null, moved = false, suppressClick = false;
   const isActionTarget = (target) => !!(target && target.closest && target.closest('.s-delete, .s-refresh'));
 
-  const resetOpenState = () => {
+  const resetOpenState = (animate = true) => {
+    if (activeOpenSourceReset === resetOpenState) activeOpenSourceReset = null;
     openDirection = 0;
+    curDx = 0;
+    row.style.transition = animate ? 'transform 0.32s var(--ease)' : 'none';
     row.style.transform = 'translateX(0)';
   };
-  const revealAction = (direction) => {
+  const revealAction = (direction, animate = true) => {
+    if (activeOpenSourceReset && activeOpenSourceReset !== resetOpenState) {
+      activeOpenSourceReset();
+    }
     openDirection = direction;
-    row.style.transition = '';
+    curDx = direction * actionWidth;
+    activeOpenSourceReset = resetOpenState;
+    row.style.transition = animate ? 'transform 0.32s var(--ease)' : 'none';
     row.style.transform = 'translateX(' + (direction * actionWidth) + 'px)';
   };
 
@@ -2720,7 +2738,7 @@ function buildSourceRow(source, onDelete) {
   delBtn.addEventListener('focus', () => revealAction(1));
   delBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    resetOpenState();
+    resetOpenState(false);
     removeSource(source.id).then(() => toast('Removed “' + source.title + '”'));
   });
 
@@ -2728,7 +2746,7 @@ function buildSourceRow(source, onDelete) {
   refreshBtn.addEventListener('focus', () => revealAction(-1));
   refreshBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    resetOpenState();
+    resetOpenState(true);
     refreshBtn.setAttribute('aria-busy', 'true');
     refreshBtn.classList.add('s-refresh--busy');
     void refreshOneSource(source.id)
@@ -2739,21 +2757,28 @@ function buildSourceRow(source, onDelete) {
       });
   });
 
-  const down = (x, y, pid) => {
+  const onDown = (x, y, pid) => {
     if (dragging) return;
+    if (activeOpenSourceReset && activeOpenSourceReset !== resetOpenState) {
+      closeActiveSourceRow();
+    }
     startX = x;
     startY = y;
     axis = null;
+    moved = false;
     curDx = openDirection * actionWidth;
     dragging = true;
-    if (pid != null) { try { row.setPointerCapture(pid); } catch (e) { /* synthetic */ } }
+    if (pid != null) {
+      try { row.setPointerCapture(pid); } catch (e) { /* synthetic */ }
+    }
   };
-  const move = (x, y) => {
+
+  const onMove = (x, y, e) => {
     if (!dragging || startX == null || startY == null) return;
     const dx = x - startX;
     const dy = y - startY;
     if (!axis) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
       axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
       if (axis === 'y') {
         dragging = false;
@@ -2761,46 +2786,91 @@ function buildSourceRow(source, onDelete) {
       }
     }
     if (axis !== 'x') return;
+    moved = true;
+    if (e && e.cancelable) e.preventDefault();
     const next = Math.max(-actionWidth, Math.min(actionWidth, curDx + dx));
     row.style.transition = 'none';
     row.style.transform = 'translateX(' + next + 'px)';
   };
-  const settle = (x) => {
+
+  const onEnd = (x) => {
     if (!dragging) return;
     dragging = false;
-    if (axis === 'x') {
-      const finalX = typeof x === 'number' ? x : startX;
-      const finalDx = curDx + finalX - startX;
-      if (finalDx <= -revealThreshold) openDirection = -1;
-      else if (finalDx >= revealThreshold) openDirection = 1;
-      else openDirection = 0;
+    const finalX = typeof x === 'number' ? x : (startX || 0);
+    const dx = finalX - (startX || finalX);
+
+    if (axis === 'x' && moved) {
       suppressClick = true;
+      const finalDx = curDx + dx;
+      if (finalDx <= -revealThreshold) {
+        revealAction(-1, true);
+      } else if (finalDx >= revealThreshold) {
+        revealAction(1, true);
+      } else {
+        resetOpenState(true);
+      }
+    } else {
+      if (openDirection !== 0 && !moved) {
+        resetOpenState(true);
+        suppressClick = true;
+      } else {
+        row.style.transition = 'transform 0.32s var(--ease)';
+        row.style.transform = 'translateX(' + (openDirection * actionWidth) + 'px)';
+      }
     }
-    row.style.transition = '';
+  };
+
+  const onCancel = () => {
+    if (!dragging) return;
+    dragging = false;
+    row.style.transition = 'transform 0.32s var(--ease)';
     row.style.transform = 'translateX(' + (openDirection * actionWidth) + 'px)';
   };
 
+  // Touch path — primary on touchscreens
   row.addEventListener('touchstart', (e) => {
     if (isActionTarget(e.target)) return;
     const t = e.touches && e.touches[0];
-    if (t) down(t.clientX, t.clientY, null);
+    if (t) onDown(t.clientX, t.clientY, null);
   }, { passive: true });
+
   row.addEventListener('touchmove', (e) => {
     const t = e.touches && e.touches[0];
-    if (t) move(t.clientX, t.clientY);
-  }, { passive: true });
+    if (t) onMove(t.clientX, t.clientY, e);
+  }, { passive: false });
+
   row.addEventListener('touchend', (e) => {
-    const t = e.changedTouches && e.changedTouches[0];
-    settle(t ? t.clientX : startX);
-  });
-  row.addEventListener('pointerdown', (e) => {
     if (isActionTarget(e.target)) return;
-    down(e.clientX, e.clientY, e.pointerId);
+    const t = e.changedTouches && e.changedTouches[0];
+    onEnd(t ? t.clientX : startX);
   });
-  row.addEventListener('pointermove', (e) => move(e.clientX, e.clientY));
-  row.addEventListener('pointerup', (e) => settle(e.clientX));
-  row.addEventListener('pointercancel', () => settle(startX));
+
+  row.addEventListener('touchcancel', () => onCancel());
+
+  // Pointer path — desktop mouse drag (skip touch pointers)
+  row.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') return;
+    if (isActionTarget(e.target)) return;
+    onDown(e.clientX, e.clientY, e.pointerId);
+  });
+
+  row.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
+    onMove(e.clientX, e.clientY, e);
+  });
+
+  row.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'touch') return;
+    onEnd(e.clientX);
+  });
+
+  row.addEventListener('pointercancel', (e) => {
+    if (e.pointerType === 'touch') return;
+    onCancel();
+  });
+
   row.addEventListener('click', (e) => {
+    if (isActionTarget(e.target)) return;
     if (suppressClick) {
       suppressClick = false;
       e.preventDefault();
@@ -2808,10 +2878,11 @@ function buildSourceRow(source, onDelete) {
       return;
     }
     if (openDirection) {
-      resetOpenState();
+      resetOpenState(true);
       e.stopPropagation();
     }
   });
+
   return row;
 }
 
@@ -2935,6 +3006,7 @@ function openSourcesScreen() {
 }
 
 function closeSourcesScreen() {
+  closeActiveSourceRow();
   const screen = sourcesScreenEl();
   screen.hidden = true;
   syncAppInert();
@@ -3404,6 +3476,10 @@ function initNav() {
   $('#add-btn').addEventListener('click', () => openSheet('source'));
   $('#sources-btn').addEventListener('click', openSourcesScreen);
   $('#sources-done').addEventListener('click', closeSourcesScreen);
+  const sourcesListEl = $('#sources-list');
+  if (sourcesListEl) {
+    sourcesListEl.addEventListener('scroll', () => closeActiveSourceRow(), { passive: true });
+  }
 
   $('#strip').addEventListener('click', (e) => {
     const b = e.target.closest('.bubble');

@@ -784,8 +784,8 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   min-height: 62px;
   touch-action: pan-y;
   transition: transform 0.44s var(--ease);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 62px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .source-row + .source-row { border-top: 0.5px solid var(--separator); }
 .source-row .source-icon {
@@ -812,9 +812,7 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
 .card-title,
 .card-byline,
 .card-summary,
-.source-name,
-.s-title,
-.s-sub {
+.source-name {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -831,6 +829,8 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   align-items: center;
   justify-content: center;
   gap: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   transition: opacity 0.3s var(--ease-fast);
 }
 .source-row .s-refresh {
