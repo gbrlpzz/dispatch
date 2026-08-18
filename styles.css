@@ -31,7 +31,7 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-fast: cubic-bezier(0.25, 0.8, 0.25, 1);
   --spring: cubic-bezier(0.22, 1.24, 0.36, 1);
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Helvetica, Arial, sans-serif;
+  --sans: "Archivo", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Helvetica, Arial, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -156,11 +156,11 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   animation: spin 1s linear infinite;
 }
 .boot-screen__wordmark {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Helvetica, Arial, sans-serif;
+  font-family: "Archivo", -apple-system, BlinkMacSystemFont, "SF Pro Display", Helvetica, Arial, sans-serif;
   color: var(--secondary);
   font-size: 0.765rem;
-  font-weight: 900;
-  letter-spacing: -0.06em;
+  font-weight: 800;
+  letter-spacing: -0.04em;
 }
 
 /* ---------------- Navigation bar (44pt + safe area) ---------------- */
@@ -875,10 +875,10 @@ button, .pill, .bubble, input[type="date"] { touch-action: manipulation; }
   letter-spacing: -0.05px;
 }
 .app-footer__brand {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Helvetica, Arial, sans-serif;
+  font-family: "Archivo", -apple-system, BlinkMacSystemFont, "SF Pro Display", Helvetica, Arial, sans-serif;
   font-size: 0.765rem;
-  font-weight: 900;
-  letter-spacing: -0.06em;
+  font-weight: 800;
+  letter-spacing: -0.04em;
 }
 .app-footer__byline { white-space: nowrap; }
 .app-footer__byline a {
